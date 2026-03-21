@@ -1,4 +1,3 @@
-/* ===== Reset & Base ===== */
 *, *::before, *::after {
     box-sizing: border-box;
     margin: 0;
@@ -14,7 +13,6 @@
     --text-muted: #8888aa;
     --accent: #6c7bff;
     --accent-hover: #8b97ff;
-    --danger: #ff4d6a;
     --radius: 8px;
     --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
@@ -37,14 +35,12 @@ html, body {
     -webkit-user-select: none;
 }
 
-/* ===== App Container ===== */
 #app {
     width: 100%;
     height: 100%;
     position: relative;
 }
 
-/* ===== Canvas ===== */
 #fractal-canvas {
     display: block;
     width: 100%;
@@ -56,7 +52,6 @@ html, body {
     will-change: transform;
 }
 
-/* ===== Loading Overlay ===== */
 #loading-overlay {
     position: fixed;
     inset: 0;
@@ -73,9 +68,7 @@ html, body {
     pointer-events: none;
 }
 
-.loader-content {
-    text-align: center;
-}
+.loader-content { text-align: center; }
 
 .spinner {
     width: 48px;
@@ -87,16 +80,13 @@ html, body {
     animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-    to { transform: rotate(360deg); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .loader-content p {
     color: var(--text-muted);
     font-size: 14px;
 }
 
-/* ===== HUD ===== */
 .hud {
     position: fixed;
     bottom: calc(12px + var(--safe-bottom));
@@ -117,7 +107,6 @@ html, body {
     white-space: nowrap;
 }
 
-/* ===== Controls Toggle ===== */
 .controls-toggle {
     position: fixed;
     top: calc(12px + var(--safe-top));
@@ -138,11 +127,8 @@ html, body {
     transition: background 0.15s;
 }
 
-.controls-toggle:hover {
-    background: var(--surface-hover);
-}
+.controls-toggle:hover { background: var(--surface-hover); }
 
-/* ===== Controls Panel ===== */
 .controls-panel {
     position: fixed;
     top: calc(var(--safe-top));
@@ -177,10 +163,7 @@ html, body {
     padding-top: calc(var(--safe-top));
 }
 
-.controls-header h2 {
-    font-size: 16px;
-    font-weight: 600;
-}
+.controls-header h2 { font-size: 16px; font-weight: 600; }
 
 .controls-close {
     background: none;
@@ -192,14 +175,9 @@ html, body {
     line-height: 1;
 }
 
-.controls-close:hover {
-    color: var(--text);
-}
+.controls-close:hover { color: var(--text); }
 
-/* ===== Controls Sections ===== */
-.controls-section {
-    margin-bottom: 20px;
-}
+.controls-section { margin-bottom: 20px; }
 
 .controls-section h3 {
     font-size: 12px;
@@ -210,12 +188,7 @@ html, body {
     margin-bottom: 10px;
 }
 
-/* ===== POI List ===== */
-.poi-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
+.poi-list { display: flex; flex-direction: column; gap: 6px; }
 
 .poi-btn {
     display: block;
@@ -236,11 +209,7 @@ html, body {
     border-color: var(--accent);
 }
 
-.poi-btn .poi-name {
-    font-weight: 600;
-    display: block;
-    margin-bottom: 2px;
-}
+.poi-btn .poi-name { font-weight: 600; display: block; margin-bottom: 2px; }
 
 .poi-btn .poi-coords {
     font-family: var(--font-mono);
@@ -248,7 +217,6 @@ html, body {
     color: var(--text-muted);
 }
 
-/* ===== Coordinate Inputs ===== */
 .coord-input-group {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -276,11 +244,8 @@ html, body {
     transition: border-color 0.15s;
 }
 
-.coord-input-group input:focus {
-    border-color: var(--accent);
-}
+.coord-input-group input:focus { border-color: var(--accent); }
 
-/* ===== Buttons ===== */
 .btn {
     padding: 8px 16px;
     border: none;
@@ -297,16 +262,9 @@ html, body {
     grid-column: 1 / -1;
 }
 
-.btn-primary:hover {
-    background: var(--accent-hover);
-}
+.btn-primary:hover { background: var(--accent-hover); }
 
-/* ===== Sliders ===== */
-.slider-group {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
+.slider-group { display: flex; flex-direction: column; gap: 12px; }
 
 .slider-group label {
     font-size: 12px;
@@ -354,7 +312,6 @@ input[type="range"]::-moz-range-thumb {
     border: 2px solid var(--bg);
 }
 
-/* ===== Shortcuts ===== */
 .shortcuts-list {
     font-size: 12px;
     color: var(--text-muted);
@@ -372,7 +329,6 @@ kbd {
     color: var(--text);
 }
 
-/* ===== Minimap ===== */
 .minimap {
     position: fixed;
     bottom: calc(44px + var(--safe-bottom));
@@ -388,16 +344,10 @@ kbd {
     transition: opacity 0.15s;
 }
 
-.minimap:hover {
-    opacity: 1;
-}
+.minimap:hover { opacity: 1; }
 
-/* ===== Animation indicator ===== */
-.animating #fractal-canvas {
-    cursor: default;
-}
+.animating #fractal-canvas { cursor: default; }
 
-/* ===== Responsive ===== */
 @media (max-width: 600px) {
     .controls-panel {
         width: 100vw;
@@ -406,43 +356,21 @@ kbd {
         border-left: none;
         padding-bottom: calc(16px + var(--safe-bottom));
     }
-
     .hud {
         font-size: 10px;
         gap: 8px;
         flex-wrap: wrap;
         max-width: calc(100vw - 180px - var(--safe-left) - var(--safe-right));
     }
-
-    .minimap {
-        width: 120px;
-        height: 90px;
-    }
+    .minimap { width: 120px; height: 90px; }
 }
 
-@media (max-width: 360px) {
-    .minimap {
-        display: none;
-    }
-}
+@media (max-width: 360px) { .minimap { display: none; } }
 
 @media (hover: none) {
-    .controls-toggle {
-        width: 48px;
-        height: 48px;
-    }
+    .controls-toggle { width: 48px; height: 48px; }
 }
 
-/* ===== Scrollbar ===== */
-.controls-panel::-webkit-scrollbar {
-    width: 6px;
-}
-
-.controls-panel::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.controls-panel::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 3px;
-}
+.controls-panel::-webkit-scrollbar { width: 6px; }
+.controls-panel::-webkit-scrollbar-track { background: transparent; }
+.controls-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }

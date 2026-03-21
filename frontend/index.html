@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="description" content="Interactive Mandelbrot Set Explorer — zoom, pan, and discover fractal beauty powered by WebAssembly">
+    <meta name="description" content="Interactive Mandelbrot Set Explorer — zoom, pan, and discover fractal beauty">
     <meta name="theme-color" content="#0a0a0f">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -18,17 +18,12 @@
     <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
 
-    <!-- Preload WASM -->
-    <link rel="preload" href="/wasm/mandelbrot_wasm_bg.wasm" as="fetch" crossorigin>
-
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <div id="app">
-        <!-- Canvas -->
         <canvas id="fractal-canvas"></canvas>
 
-        <!-- Loading overlay -->
         <div id="loading-overlay">
             <div class="loader-content">
                 <div class="spinner"></div>
@@ -36,14 +31,12 @@
             </div>
         </div>
 
-        <!-- HUD: coordinates and zoom -->
         <div id="hud" class="hud">
             <span id="hud-coords"></span>
             <span id="hud-zoom"></span>
             <span id="hud-iter"></span>
         </div>
 
-        <!-- Controls panel -->
         <button id="controls-toggle" class="controls-toggle" aria-label="Toggle controls" title="Toggle controls">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <line x1="4" y1="7" x2="20" y2="7"/><circle cx="8" cy="7" r="2.5" fill="currentColor"/>
@@ -66,18 +59,9 @@
             <div class="controls-section">
                 <h3>Go to Coordinates</h3>
                 <div class="coord-input-group">
-                    <label>
-                        Real
-                        <input type="number" id="input-real" step="any" value="-0.5" />
-                    </label>
-                    <label>
-                        Imaginary
-                        <input type="number" id="input-imag" step="any" value="0" />
-                    </label>
-                    <label>
-                        Zoom
-                        <input type="number" id="input-zoom" step="any" min="0.1" value="1" />
-                    </label>
+                    <label>Real<input type="number" id="input-real" step="any" value="-0.5" /></label>
+                    <label>Imaginary<input type="number" id="input-imag" step="any" value="0" /></label>
+                    <label>Zoom<input type="number" id="input-zoom" step="any" min="0.1" value="1" /></label>
                     <button id="btn-goto" class="btn btn-primary">Go</button>
                 </div>
             </div>
@@ -85,13 +69,11 @@
             <div class="controls-section">
                 <h3>Animation Speed</h3>
                 <div class="slider-group">
-                    <label>
-                        Zoom Speed
+                    <label>Zoom Speed
                         <input type="range" id="slider-zoom-speed" min="0.5" max="5" step="0.1" value="2" />
                         <span id="zoom-speed-val">2.0x</span>
                     </label>
-                    <label>
-                        Pan Speed
+                    <label>Pan Speed
                         <input type="range" id="slider-pan-speed" min="0.5" max="5" step="0.1" value="2" />
                         <span id="pan-speed-val">2.0x</span>
                     </label>
@@ -101,13 +83,11 @@
             <div class="controls-section">
                 <h3>Render Settings</h3>
                 <div class="slider-group">
-                    <label>
-                        Max Iterations
+                    <label>Max Iterations
                         <input type="range" id="slider-iterations" min="50" max="2000" step="10" value="300" />
                         <span id="iter-val">300</span>
                     </label>
-                    <label>
-                        Resolution Scale
+                    <label>Resolution Scale
                         <input type="range" id="slider-resolution" min="0.25" max="2" step="0.25" value="1" />
                         <span id="res-val">1.0x</span>
                     </label>
@@ -128,10 +108,9 @@
             </div>
         </div>
 
-        <!-- Minimap -->
         <canvas id="minimap-canvas" class="minimap" width="160" height="120"></canvas>
     </div>
 
-    <script type="module" src="/static/app.js"></script>
+    <script src="/app.js"></script>
 </body>
 </html>

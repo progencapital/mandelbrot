@@ -1,58 +1,17 @@
-// Mandelbrot Explorer — Main Application
-// Powered by Rust/WASM computation engine
+// Mandelbrot Explorer — Pure Vanilla JS
+// Off-main-thread rendering via Web Workers
 
-// ===== Places of Interest =====
 const PLACES_OF_INTEREST = [
-    {
-        name: "Full Set",
-        description: "The complete Mandelbrot set",
-        x: -0.5, y: 0, zoom: 1,
-    },
-    {
-        name: "Seahorse Valley",
-        description: "Intricate spiral patterns between the main cardioid and period-2 bulb",
-        x: -0.7463, y: 0.1102, zoom: 200,
-    },
-    {
-        name: "Elephant Valley",
-        description: "Elephant-trunk shaped formations",
-        x: 0.2815, y: 0.0085, zoom: 150,
-    },
-    {
-        name: "Double Spiral",
-        description: "A mesmerizing double spiral formation",
-        x: -0.0452407411, y: 0.9868162204352258, zoom: 2000,
-    },
-    {
-        name: "Lightning",
-        description: "Fractal lightning bolt patterns",
-        x: -1.315180982097868, y: 0.073481649996795, zoom: 50000,
-    },
-    {
-        name: "Starfish",
-        description: "Star-shaped formations deep in the set",
-        x: -0.3558404221, y: 0.6428140572, zoom: 5000,
-    },
-    {
-        name: "Spiral Galaxy",
-        description: "Spiraling galaxy-like structure",
-        x: -0.7436439, y: 0.1318259, zoom: 50000,
-    },
-    {
-        name: "Mini Mandelbrot",
-        description: "A miniature copy of the entire set",
-        x: -1.7497591451303665, y: 0.0000000388, zoom: 300000,
-    },
-    {
-        name: "Tendrils",
-        description: "Delicate tendril formations at the boundary",
-        x: -0.10109636384562, y: 0.9562865108091415, zoom: 20000,
-    },
-    {
-        name: "Quad Spiral",
-        description: "Four interleaving spirals",
-        x: 0.27322626, y: 0.595153338, zoom: 60000,
-    },
+    { name: "Full Set", description: "The complete Mandelbrot set", x: -0.5, y: 0, zoom: 1 },
+    { name: "Seahorse Valley", description: "Intricate spiral patterns", x: -0.7463, y: 0.1102, zoom: 200 },
+    { name: "Elephant Valley", description: "Elephant-trunk formations", x: 0.2815, y: 0.0085, zoom: 150 },
+    { name: "Double Spiral", description: "Mesmerizing double spiral", x: -0.0452407411, y: 0.9868162204352258, zoom: 2000 },
+    { name: "Lightning", description: "Fractal lightning patterns", x: -1.315180982097868, y: 0.073481649996795, zoom: 50000 },
+    { name: "Starfish", description: "Star-shaped formations", x: -0.3558404221, y: 0.6428140572, zoom: 5000 },
+    { name: "Spiral Galaxy", description: "Galaxy-like structure", x: -0.7436439, y: 0.1318259, zoom: 50000 },
+    { name: "Mini Mandelbrot", description: "Self-similar miniature copy", x: -1.7497591451303665, y: 0.0000000388, zoom: 300000 },
+    { name: "Tendrils", description: "Delicate boundary formations", x: -0.10109636384562, y: 0.9562865108091415, zoom: 20000 },
+    { name: "Quad Spiral", description: "Four interleaving spirals", x: 0.27322626, y: 0.595153338, zoom: 60000 },
 ];
 
 // ===== State =====
@@ -65,23 +24,18 @@ const state = {
     zoomSpeed: 2,
     panSpeed: 2,
     animating: false,
-    wasmModule: null,
-    renderPending: false,
     lastRenderTime: 0,
-    interacting: false,
 };
 
-// ===== DOM Refs =====
+// ===== DOM =====
 const canvas = document.getElementById("fractal-canvas");
-const ctx = canvas.getContext("2d", { willReadFrequently: false });
+const ctx = canvas.getContext("2d");
 const minimapCanvas = document.getElementById("minimap-canvas");
 const minimapCtx = minimapCanvas.getContext("2d");
 const loadingOverlay = document.getElementById("loading-overlay");
 const hudCoords = document.getElementById("hud-coords");
 const hudZoom = document.getElementById("hud-zoom");
 const hudIter = document.getElementById("hud-iter");
-
-// Controls
 const controlsToggle = document.getElementById("controls-toggle");
 const controlsPanel = document.getElementById("controls-panel");
 const controlsClose = document.getElementById("controls-close");
@@ -90,8 +44,6 @@ const inputReal = document.getElementById("input-real");
 const inputImag = document.getElementById("input-imag");
 const inputZoom = document.getElementById("input-zoom");
 const btnGoto = document.getElementById("btn-goto");
-
-// Sliders
 const sliderZoomSpeed = document.getElementById("slider-zoom-speed");
 const sliderPanSpeed = document.getElementById("slider-pan-speed");
 const sliderIterations = document.getElementById("slider-iterations");
@@ -101,24 +53,24 @@ const panSpeedVal = document.getElementById("pan-speed-val");
 const iterVal = document.getElementById("iter-val");
 const resVal = document.getElementById("res-val");
 
-// ===== WASM Initialization =====
-async function initWasm() {
-    try {
-        const wasm = await import("/wasm/mandelbrot_wasm.js");
-        await wasm.default();
-        state.wasmModule = wasm;
-        return true;
-    } catch (err) {
-        console.error("Failed to load WASM module:", err);
-        return false;
-    }
+// ===== Web Worker Pool =====
+const WORKER_COUNT = Math.min(navigator.hardwareConcurrency || 4, 8);
+const workers = [];
+let renderIdCounter = 0;
+let currentRenderId = 0;
+let pendingChunks = 0;
+
+for (let i = 0; i < WORKER_COUNT; i++) {
+    const w = new Worker("/worker.js");
+    w.onmessage = onWorkerMessage;
+    workers.push(w);
 }
 
-// ===== Rendering =====
+// ===== Canvas sizing =====
 let renderWidth = 0;
 let renderHeight = 0;
 
-// Track what state was last rendered so we can use CSS transforms for deltas
+// Track last rendered state for CSS transform feedback
 let renderedCenterX = -0.5;
 let renderedCenterY = 0;
 let renderedZoom = 1;
@@ -128,7 +80,6 @@ function resizeCanvas() {
     const scale = state.resolutionScale * dpr;
     const w = window.innerWidth;
     const h = window.innerHeight;
-
     canvas.style.width = w + "px";
     canvas.style.height = h + "px";
     renderWidth = Math.round(w * scale);
@@ -137,20 +88,82 @@ function resizeCanvas() {
     canvas.height = renderHeight;
 }
 
-// Apply a CSS transform to give instant visual feedback based on
-// the difference between current state and what was last rendered.
+// ===== Rendering with Worker Pool =====
+// Split the image into horizontal strips, one per worker
+
+function render() {
+    renderIdCounter++;
+    currentRenderId = renderIdCounter;
+    const rid = currentRenderId;
+
+    const rowsPerWorker = Math.ceil(renderHeight / WORKER_COUNT);
+
+    pendingChunks = WORKER_COUNT;
+
+    for (let i = 0; i < WORKER_COUNT; i++) {
+        const yStart = i * rowsPerWorker;
+        const yEnd = Math.min(yStart + rowsPerWorker, renderHeight);
+        const chunkHeight = yEnd - yStart;
+        if (chunkHeight <= 0) {
+            pendingChunks--;
+            continue;
+        }
+
+        // Compute the centerY offset for this strip
+        const viewHeight = 3.0 / state.zoom;
+        const viewWidth = viewHeight * (renderWidth / renderHeight);
+        const stripCenterY = state.centerY + viewHeight * ((yStart + chunkHeight / 2) / renderHeight - 0.5);
+
+        workers[i].postMessage({
+            id: rid,
+            width: renderWidth,
+            height: chunkHeight,
+            centerX: state.centerX,
+            centerY: stripCenterY,
+            zoom: state.zoom,
+            maxIter: state.maxIter,
+            _yStart: yStart,
+        });
+    }
+}
+
+function onWorkerMessage(e) {
+    const { id, buf, elapsed, width, height } = e.data;
+
+    // Discard stale renders
+    if (id !== currentRenderId) return;
+
+    const pixels = new Uint8ClampedArray(buf);
+    const imageData = new ImageData(pixels, width, height);
+
+    // Recover yStart from the worker message
+    // We encode it; let's use a different approach: track per-worker
+    const workerIdx = workers.indexOf(e.target);
+    const rowsPerWorker = Math.ceil(renderHeight / WORKER_COUNT);
+    const yStart = workerIdx * rowsPerWorker;
+
+    ctx.putImageData(imageData, 0, yStart);
+
+    state.lastRenderTime = Math.max(state.lastRenderTime, elapsed);
+    pendingChunks--;
+
+    if (pendingChunks <= 0) {
+        renderedCenterX = state.centerX;
+        renderedCenterY = state.centerY;
+        renderedZoom = state.zoom;
+        clearTransform();
+        updateHUD();
+    }
+}
+
+// ===== CSS Transform feedback =====
 function applyTransformFeedback() {
     const screenH = window.innerHeight;
-    const viewHeight = 3.0 / renderedZoom;
-    const pixelsPerUnit = screenH / viewHeight;
-
-    // Pan offset in pixels
-    const dx = -(state.centerX - renderedCenterX) * pixelsPerUnit;
-    const dy = -(state.centerY - renderedCenterY) * pixelsPerUnit;
-
-    // Zoom scale ratio
+    const viewH = 3.0 / renderedZoom;
+    const pxPerUnit = screenH / viewH;
+    const dx = -(state.centerX - renderedCenterX) * pxPerUnit;
+    const dy = -(state.centerY - renderedCenterY) * pxPerUnit;
     const s = state.zoom / renderedZoom;
-
     canvas.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
 }
 
@@ -158,87 +171,56 @@ function clearTransform() {
     canvas.style.transform = "";
 }
 
-// Debounce timer for settling after interaction
 let settleTimer = null;
-const SETTLE_DELAY = 80; // ms after last interaction before full render
+const SETTLE_DELAY = 60;
 
 function scheduleRender() {
-    clearTimeout(settleTimer);
-    // Apply CSS transform immediately for visual feedback
     applyTransformFeedback();
     updateHUD();
-
+    clearTimeout(settleTimer);
     settleTimer = setTimeout(() => {
-        renderFull();
-    }, SETTLE_DELAY);
-}
-
-function renderFull() {
-    if (!state.wasmModule || state.renderPending) return;
-    state.renderPending = true;
-
-    requestAnimationFrame(() => {
-        const t0 = performance.now();
-        const pixels = state.wasmModule.render(
-            renderWidth,
-            renderHeight,
-            state.centerX,
-            state.centerY,
-            state.zoom,
-            state.maxIter
-        );
-
-        const imageData = new ImageData(
-            new Uint8ClampedArray(pixels),
-            renderWidth,
-            renderHeight
-        );
-        ctx.putImageData(imageData, 0, 0);
-        state.lastRenderTime = performance.now() - t0;
-
-        // Update tracked rendered state
-        renderedCenterX = state.centerX;
-        renderedCenterY = state.centerY;
-        renderedZoom = state.zoom;
-        clearTransform();
-
-        updateHUD();
-        state.renderPending = false;
-    });
-}
-
-// Immediate render (used for initial load and animations)
-function render() {
-    renderFull();
-}
-
-// Debounced render for resize events
-let resizeTimer = null;
-function onResize() {
-    resizeCanvas();
-    render();
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-        resizeCanvas();
+        state.lastRenderTime = 0;
         render();
-    }, 150);
+    }, SETTLE_DELAY);
 }
 
 // ===== Minimap =====
 let minimapImageData = null;
+const minimapWorker = new Worker("/worker.js");
 
 function renderMinimap() {
     const mw = minimapCanvas.width;
     const mh = minimapCanvas.height;
 
     if (!minimapImageData) {
-        const pixels = state.wasmModule.render(mw, mh, -0.5, 0, 1, 200);
-        minimapImageData = new ImageData(new Uint8ClampedArray(pixels), mw, mh);
+        // Render minimap once using a dedicated worker
+        minimapWorker.postMessage({
+            id: -1,
+            width: mw,
+            height: mh,
+            centerX: -0.5,
+            centerY: 0,
+            zoom: 1,
+            maxIter: 200,
+        });
+        minimapWorker.onmessage = function(e) {
+            if (e.data.id === -1) {
+                minimapImageData = new ImageData(new Uint8ClampedArray(e.data.buf), mw, mh);
+                drawMinimap();
+            }
+        };
+        return;
     }
 
+    drawMinimap();
+}
+
+function drawMinimap() {
+    if (!minimapImageData) return;
+    const mw = minimapCanvas.width;
+    const mh = minimapCanvas.height;
     minimapCtx.putImageData(minimapImageData, 0, 0);
 
-    // Draw viewport indicator
     const viewWidth = 3.0 / state.zoom;
     const viewHeight = viewWidth * (mh / mw);
     const totalWidth = 3.0;
@@ -259,7 +241,7 @@ function updateHUD() {
     hudCoords.textContent = `Re: ${state.centerX.toFixed(12)} Im: ${state.centerY.toFixed(12)}`;
     hudZoom.textContent = `Zoom: ${formatZoom(state.zoom)}`;
     hudIter.textContent = `${state.lastRenderTime.toFixed(0)}ms`;
-    renderMinimap();
+    drawMinimap();
 }
 
 function formatZoom(z) {
@@ -269,17 +251,14 @@ function formatZoom(z) {
     return z.toFixed(1);
 }
 
-// ===== Mouse / Touch Interaction =====
+// ===== Mouse / Touch =====
 let isDragging = false;
-let dragStartX = 0;
-let dragStartY = 0;
-let dragCenterX = 0;
-let dragCenterY = 0;
+let dragStartX = 0, dragStartY = 0;
+let dragCenterX = 0, dragCenterY = 0;
 
 canvas.addEventListener("pointerdown", (e) => {
     if (state.animating) return;
     isDragging = true;
-    state.interacting = true;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
     dragCenterX = state.centerX;
@@ -295,33 +274,28 @@ canvas.addEventListener("pointermove", (e) => {
     const scale = 3.0 / (state.zoom * window.innerHeight);
     state.centerX = dragCenterX - dx * scale;
     state.centerY = dragCenterY - dy * scale;
-    // Use CSS transform for instant feedback, debounce actual render
     scheduleRender();
 });
 
 canvas.addEventListener("pointerup", (e) => {
     if (isDragging) {
         isDragging = false;
-        state.interacting = false;
         canvas.releasePointerCapture(e.pointerId);
         canvas.style.cursor = "crosshair";
-        // Force immediate full render on release
         clearTimeout(settleTimer);
-        renderFull();
+        state.lastRenderTime = 0;
+        render();
     }
 });
 
-canvas.addEventListener("pointercancel", (e) => {
+canvas.addEventListener("pointercancel", () => {
     isDragging = false;
-    state.interacting = false;
     canvas.style.cursor = "crosshair";
     clearTimeout(settleTimer);
-    renderFull();
+    render();
 });
 
 // ===== Scroll Zoom =====
-let wheelSettleTimer = null;
-
 canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
     if (state.animating) return;
@@ -330,18 +304,15 @@ canvas.addEventListener("wheel", (e) => {
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // Convert mouse position to fractal coordinates
     const aspect = rect.width / rect.height;
     const viewHeight = 3.0 / state.zoom;
     const viewWidth = viewHeight * aspect;
     const fracX = state.centerX + (mouseX / rect.width - 0.5) * viewWidth;
     const fracY = state.centerY + (mouseY / rect.height - 0.5) * viewHeight;
 
-    // Progressive zoom factor
     const zoomFactor = e.deltaY > 0 ? 1 / 1.15 : 1.15;
     const newZoom = state.zoom * zoomFactor;
 
-    // Zoom toward cursor
     const t = 1 - 1 / zoomFactor;
     if (e.deltaY < 0) {
         state.centerX += (fracX - state.centerX) * t;
@@ -353,14 +324,11 @@ canvas.addEventListener("wheel", (e) => {
 
     state.zoom = Math.max(0.1, newZoom);
     adaptIterations();
-
-    // CSS transform for instant feedback
     scheduleRender();
 }, { passive: false });
 
 // ===== Pinch Zoom =====
 let lastPinchDist = 0;
-let pinchCenter = { x: 0, y: 0 };
 const activePointers = new Map();
 
 canvas.addEventListener("pointerdown", (e) => {
@@ -372,19 +340,13 @@ canvas.addEventListener("pointermove", (e) => {
     if (activePointers.size === 2) {
         const [p1, p2] = [...activePointers.values()];
         const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-        const cx = (p1.x + p2.x) / 2;
-        const cy = (p1.y + p2.y) / 2;
-
         if (lastPinchDist > 0) {
-            const scale = dist / lastPinchDist;
-            state.zoom *= scale;
+            state.zoom *= dist / lastPinchDist;
             state.zoom = Math.max(0.1, state.zoom);
             adaptIterations();
             scheduleRender();
         }
-
         lastPinchDist = dist;
-        pinchCenter = { x: cx, y: cy };
         isDragging = false;
     }
 });
@@ -393,17 +355,16 @@ function onPointerEnd(e) {
     activePointers.delete(e.pointerId);
     if (activePointers.size < 2) {
         lastPinchDist = 0;
-        // Render full quality after pinch ends
         if (activePointers.size === 0) {
             clearTimeout(settleTimer);
-            renderFull();
+            render();
         }
     }
 }
 canvas.addEventListener("pointerup", onPointerEnd);
 canvas.addEventListener("pointercancel", onPointerEnd);
 
-// ===== Keyboard Controls =====
+// ===== Keyboard =====
 document.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT") return;
     if (state.animating) return;
@@ -411,53 +372,18 @@ document.addEventListener("keydown", (e) => {
     const panAmount = 0.1 / state.zoom * 3.0;
 
     switch (e.key) {
-        case "ArrowLeft":
-        case "a":
-            state.centerX -= panAmount;
-            scheduleRender();
+        case "ArrowLeft": case "a": state.centerX -= panAmount; scheduleRender(); break;
+        case "ArrowRight": case "d": state.centerX += panAmount; scheduleRender(); break;
+        case "ArrowUp": case "w": state.centerY -= panAmount; scheduleRender(); break;
+        case "ArrowDown": case "s":
+            if (!e.ctrlKey && !e.metaKey) { state.centerY += panAmount; scheduleRender(); }
             break;
-        case "ArrowRight":
-        case "d":
-            state.centerX += panAmount;
-            scheduleRender();
-            break;
-        case "ArrowUp":
-        case "w":
-            state.centerY -= panAmount;
-            scheduleRender();
-            break;
-        case "ArrowDown":
-        case "s":
-            if (!e.ctrlKey && !e.metaKey) {
-                state.centerY += panAmount;
-                scheduleRender();
-            }
-            break;
-        case "+":
-        case "=":
-            state.zoom *= 1.5;
-            adaptIterations();
-            scheduleRender();
-            break;
-        case "-":
-            state.zoom = Math.max(0.1, state.zoom / 1.5);
-            adaptIterations();
-            scheduleRender();
-            break;
-        case "r":
-        case "R":
-            animateTo(-0.5, 0, 1);
-            break;
-        case "f":
-        case "F":
-            toggleFullscreen();
-            break;
+        case "+": case "=": state.zoom *= 1.5; adaptIterations(); scheduleRender(); break;
+        case "-": state.zoom = Math.max(0.1, state.zoom / 1.5); adaptIterations(); scheduleRender(); break;
+        case "r": case "R": animateTo(-0.5, 0, 1); break;
+        case "f": case "F": toggleFullscreen(); break;
     }
-
-    // 'S' for settings toggle — only if not 's' for pan down
-    if ((e.key === "S") && !e.shiftKey === false) {
-        toggleControls();
-    }
+    if (e.key === "S" && !e.shiftKey === false) toggleControls();
 });
 
 // ===== Adaptive Iterations =====
@@ -476,72 +402,44 @@ function animateTo(targetX, targetY, targetZoom) {
     state.animating = true;
     document.body.classList.add("animating");
 
-    const startX = state.centerX;
-    const startY = state.centerY;
-    const startZoom = state.zoom;
-
+    const startX = state.centerX, startY = state.centerY, startZoom = state.zoom;
     const overviewZoom = Math.min(startZoom, targetZoom, 1);
 
-    const zoomOutDuration = 1200 / state.zoomSpeed;
-    const panDuration = 1000 / state.panSpeed;
-    const zoomInDuration = 1500 / state.zoomSpeed;
+    const zoomOutDur = 1200 / state.zoomSpeed;
+    const panDur = 1000 / state.panSpeed;
+    const zoomInDur = 1500 / state.zoomSpeed;
 
-    let startTime = null;
-    let phase = 0;
+    let startTime = null, phase = 0;
 
-    function easeInOutCubic(t) {
-        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    }
+    const easeInOutCubic = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+    const easeOutExpo = t => t === 1 ? 1 : 1 - Math.pow(2, -10*t);
+    const lerpZoom = (a, b, t) => Math.exp(Math.log(a) + (Math.log(b) - Math.log(a)) * t);
 
-    function easeOutExpo(t) {
-        return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
-    }
-
-    function lerpZoom(from, to, t) {
-        const logFrom = Math.log(from);
-        const logTo = Math.log(to);
-        return Math.exp(logFrom + (logTo - logFrom) * t);
-    }
-
-    function step(timestamp) {
-        if (!startTime) startTime = timestamp;
-        const elapsed = timestamp - startTime;
+    function step(ts) {
+        if (!startTime) startTime = ts;
+        const elapsed = ts - startTime;
 
         if (phase === 0) {
-            const t = Math.min(1, elapsed / zoomOutDuration);
+            const t = Math.min(1, elapsed / zoomOutDur);
             const et = easeInOutCubic(t);
             state.zoom = lerpZoom(startZoom, overviewZoom, et);
             state.centerX = startX + (targetX - startX) * et * 0.2;
             state.centerY = startY + (targetY - startY) * et * 0.2;
-            adaptIterations();
-            render();
-
-            if (t >= 1) {
-                phase = 1;
-                startTime = timestamp;
-            }
+            adaptIterations(); render();
+            if (t >= 1) { phase = 1; startTime = ts; }
         } else if (phase === 1) {
-            const panStartX = state.centerX;
-            const panStartY = state.centerY;
-            const t = Math.min(1, elapsed / panDuration);
+            const px = state.centerX, py = state.centerY;
+            const t = Math.min(1, elapsed / panDur);
             const et = easeInOutCubic(t);
-            state.centerX = panStartX + (targetX - panStartX) * et;
-            state.centerY = panStartY + (targetY - panStartY) * et;
+            state.centerX = px + (targetX - px) * et;
+            state.centerY = py + (targetY - py) * et;
             render();
-
-            if (t >= 1) {
-                state.centerX = targetX;
-                state.centerY = targetY;
-                phase = 2;
-                startTime = timestamp;
-            }
+            if (t >= 1) { state.centerX = targetX; state.centerY = targetY; phase = 2; startTime = ts; }
         } else if (phase === 2) {
-            const t = Math.min(1, elapsed / zoomInDuration);
+            const t = Math.min(1, elapsed / zoomInDur);
             const et = easeOutExpo(t);
             state.zoom = lerpZoom(overviewZoom, targetZoom, et);
-            adaptIterations();
-            render();
-
+            adaptIterations(); render();
             if (t >= 1) {
                 state.zoom = targetZoom;
                 state.animating = false;
@@ -550,37 +448,25 @@ function animateTo(targetX, targetY, targetZoom) {
                 return;
             }
         }
-
         requestAnimationFrame(step);
     }
-
     requestAnimationFrame(step);
 }
 
 // ===== Controls UI =====
-function toggleControls() {
-    controlsPanel.classList.toggle("hidden");
-}
-
+function toggleControls() { controlsPanel.classList.toggle("hidden"); }
 controlsToggle.addEventListener("click", toggleControls);
 controlsClose.addEventListener("click", () => controlsPanel.classList.add("hidden"));
-
 canvas.addEventListener("pointerdown", () => {
-    if (!controlsPanel.classList.contains("hidden")) {
-        controlsPanel.classList.add("hidden");
-    }
+    if (!controlsPanel.classList.contains("hidden")) controlsPanel.classList.add("hidden");
 });
 
-// POI buttons
 function buildPOI() {
     poiList.innerHTML = "";
     for (const poi of PLACES_OF_INTEREST) {
         const btn = document.createElement("button");
         btn.className = "poi-btn";
-        btn.innerHTML = `
-            <span class="poi-name">${poi.name}</span>
-            <span class="poi-coords">${poi.x}, ${poi.y}i — zoom ${formatZoom(poi.zoom)}</span>
-        `;
+        btn.innerHTML = `<span class="poi-name">${poi.name}</span><span class="poi-coords">${poi.x}, ${poi.y}i — zoom ${formatZoom(poi.zoom)}</span>`;
         btn.title = poi.description;
         btn.addEventListener("click", () => {
             controlsPanel.classList.add("hidden");
@@ -590,11 +476,8 @@ function buildPOI() {
     }
 }
 
-// Go to coordinates
 btnGoto.addEventListener("click", () => {
-    const x = parseFloat(inputReal.value);
-    const y = parseFloat(inputImag.value);
-    const z = parseFloat(inputZoom.value);
+    const x = parseFloat(inputReal.value), y = parseFloat(inputImag.value), z = parseFloat(inputZoom.value);
     if (isNaN(x) || isNaN(y) || isNaN(z)) return;
     controlsPanel.classList.add("hidden");
     animateTo(x, y, Math.max(0.1, z));
@@ -605,19 +488,16 @@ sliderZoomSpeed.addEventListener("input", () => {
     state.zoomSpeed = parseFloat(sliderZoomSpeed.value);
     zoomSpeedVal.textContent = state.zoomSpeed.toFixed(1) + "x";
 });
-
 sliderPanSpeed.addEventListener("input", () => {
     state.panSpeed = parseFloat(sliderPanSpeed.value);
     panSpeedVal.textContent = state.panSpeed.toFixed(1) + "x";
 });
-
 sliderIterations.addEventListener("input", () => {
     sliderIterations.dataset.manual = "true";
     state.maxIter = parseInt(sliderIterations.value);
     iterVal.textContent = state.maxIter;
     render();
 });
-
 sliderResolution.addEventListener("input", () => {
     state.resolutionScale = parseFloat(sliderResolution.value);
     resVal.textContent = state.resolutionScale.toFixed(2) + "x";
@@ -627,44 +507,36 @@ sliderResolution.addEventListener("input", () => {
 
 // ===== Fullscreen =====
 function toggleFullscreen() {
-    if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
-    } else {
-        document.exitFullscreen().catch(() => {});
-    }
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+    else document.exitFullscreen().catch(() => {});
 }
 
-// ===== Service Worker Registration =====
+// ===== Resize =====
+let resizeTimer = null;
+function onResize() {
+    resizeCanvas();
+    render();
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { resizeCanvas(); render(); }, 150);
+}
+
+// ===== Service Worker =====
 async function registerSW() {
     if ("serviceWorker" in navigator) {
-        try {
-            await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-        } catch (err) {
-            console.warn("SW registration failed:", err);
-        }
+        try { await navigator.serviceWorker.register("/sw.js", { scope: "/" }); }
+        catch (err) { console.warn("SW registration failed:", err); }
     }
 }
 
 // ===== Boot =====
-async function boot() {
+(function boot() {
     resizeCanvas();
     window.addEventListener("resize", onResize);
-
-    const ok = await initWasm();
-    if (!ok) {
-        loadingOverlay.querySelector("p").textContent = "Failed to load WASM module. Please refresh.";
-        return;
-    }
-
     buildPOI();
     render();
     renderMinimap();
 
-    // Fade out loading
     loadingOverlay.classList.add("fade-out");
     setTimeout(() => loadingOverlay.remove(), 600);
-
     registerSW();
-}
-
-boot();
+})();

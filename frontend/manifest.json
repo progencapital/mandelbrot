@@ -1,7 +1,7 @@
 {
     "name": "Mandelbrot Explorer",
     "short_name": "Mandelbrot",
-    "description": "Interactive Mandelbrot Set Explorer powered by WebAssembly",
+    "description": "Interactive Mandelbrot Set Explorer",
     "start_url": "/",
     "display": "standalone",
     "orientation": "any",
@@ -27,6 +27,5 @@
             "type": "image/svg+xml"
         }
     ],
-    "screenshots": [],
     "prefer_related_applications": false
 }
