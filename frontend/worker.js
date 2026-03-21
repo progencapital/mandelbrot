@@ -1,7 +1,6 @@
 // Mandelbrot Web Worker — computes fractal pixels off the main thread
-// Receives render requests, returns pixel buffers via transferable objects
+// Receives render requests with exact fractal coordinate bounds
 
-// Precompute palette (256 entries, Ultra Fractal style)
 const palette = new Uint8Array(256 * 3);
 (function initPalette() {
     const stops = [
@@ -29,19 +28,12 @@ const palette = new Uint8Array(256 * 3);
     }
 })();
 
-function computeMandelbrot(width, height, centerX, centerY, zoom, maxIter) {
+// Renders a strip of the Mandelbrot set given exact fractal bounds
+// xMin, yMin, dx, dy define the mapping from pixels to fractal coordinates
+function computeStrip(width, height, xMin, yMin, dx, dy, maxIter) {
     const buf = new ArrayBuffer(width * height * 4);
     const pixels = new Uint8Array(buf);
-
-    const viewHeight = 3.0 / zoom;
-    const viewWidth = viewHeight * (width / height);
-    const xMin = centerX - viewWidth * 0.5;
-    const yMin = centerY - viewHeight * 0.5;
-    const dx = viewWidth / width;
-    const dy = viewHeight / height;
-
     const log2 = Math.log(2);
-    const invMaxIter = 1.0 / maxIter;
 
     for (let py = 0; py < height; py++) {
         const ci = yMin + py * dy;
@@ -92,7 +84,6 @@ function computeMandelbrot(width, height, centerX, centerY, zoom, maxIter) {
                 pixels[idx + 2] = 0;
                 pixels[idx + 3] = 255;
             } else {
-                // Smooth coloring
                 const logZn = Math.log(zr2 + zi2) * 0.5;
                 const nu = Math.log(logZn / log2) / log2;
                 const smooth = iter + 1 - nu;
@@ -115,11 +106,10 @@ function computeMandelbrot(width, height, centerX, centerY, zoom, maxIter) {
 }
 
 self.onmessage = function(e) {
-    const { id, width, height, centerX, centerY, zoom, maxIter } = e.data;
+    const { id, width, height, xMin, yMin, dx, dy, maxIter, yStart } = e.data;
     const t0 = performance.now();
-    const buf = computeMandelbrot(width, height, centerX, centerY, zoom, maxIter);
+    const buf = computeStrip(width, height, xMin, yMin, dx, dy, maxIter);
     const elapsed = performance.now() - t0;
 
-    // Transfer buffer (zero-copy)
-    self.postMessage({ id, buf, elapsed, width, height }, [buf]);
+    self.postMessage({ id, buf, elapsed, width, height, yStart }, [buf]);
 };

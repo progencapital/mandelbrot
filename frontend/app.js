@@ -89,59 +89,53 @@ function resizeCanvas() {
 }
 
 // ===== Rendering with Worker Pool =====
-// Split the image into horizontal strips, one per worker
+// Split the image into horizontal strips; each worker gets exact fractal bounds
 
 function render() {
     renderIdCounter++;
     currentRenderId = renderIdCounter;
     const rid = currentRenderId;
 
-    const rowsPerWorker = Math.ceil(renderHeight / WORKER_COUNT);
+    // Compute full-image fractal bounds
+    const viewHeight = 3.0 / state.zoom;
+    const viewWidth = viewHeight * (renderWidth / renderHeight);
+    const xMin = state.centerX - viewWidth * 0.5;
+    const yMin = state.centerY - viewHeight * 0.5;
+    const dx = viewWidth / renderWidth;
+    const dy = viewHeight / renderHeight;
 
-    pendingChunks = WORKER_COUNT;
+    const rowsPerWorker = Math.ceil(renderHeight / WORKER_COUNT);
+    pendingChunks = 0;
 
     for (let i = 0; i < WORKER_COUNT; i++) {
         const yStart = i * rowsPerWorker;
         const yEnd = Math.min(yStart + rowsPerWorker, renderHeight);
         const chunkHeight = yEnd - yStart;
-        if (chunkHeight <= 0) {
-            pendingChunks--;
-            continue;
-        }
+        if (chunkHeight <= 0) continue;
 
-        // Compute the centerY offset for this strip
-        const viewHeight = 3.0 / state.zoom;
-        const viewWidth = viewHeight * (renderWidth / renderHeight);
-        const stripCenterY = state.centerY + viewHeight * ((yStart + chunkHeight / 2) / renderHeight - 0.5);
-
+        pendingChunks++;
         workers[i].postMessage({
             id: rid,
             width: renderWidth,
             height: chunkHeight,
-            centerX: state.centerX,
-            centerY: stripCenterY,
-            zoom: state.zoom,
+            xMin: xMin,
+            yMin: yMin + yStart * dy,
+            dx: dx,
+            dy: dy,
             maxIter: state.maxIter,
-            _yStart: yStart,
+            yStart: yStart,
         });
     }
 }
 
 function onWorkerMessage(e) {
-    const { id, buf, elapsed, width, height } = e.data;
+    const { id, buf, elapsed, width, height, yStart } = e.data;
 
     // Discard stale renders
     if (id !== currentRenderId) return;
 
     const pixels = new Uint8ClampedArray(buf);
     const imageData = new ImageData(pixels, width, height);
-
-    // Recover yStart from the worker message
-    // We encode it; let's use a different approach: track per-worker
-    const workerIdx = workers.indexOf(e.target);
-    const rowsPerWorker = Math.ceil(renderHeight / WORKER_COUNT);
-    const yStart = workerIdx * rowsPerWorker;
-
     ctx.putImageData(imageData, 0, yStart);
 
     state.lastRenderTime = Math.max(state.lastRenderTime, elapsed);
@@ -194,14 +188,18 @@ function renderMinimap() {
 
     if (!minimapImageData) {
         // Render minimap once using a dedicated worker
+        const mvh = 3.0; // viewHeight at zoom=1
+        const mvw = mvh * (mw / mh);
         minimapWorker.postMessage({
             id: -1,
             width: mw,
             height: mh,
-            centerX: -0.5,
-            centerY: 0,
-            zoom: 1,
+            xMin: -0.5 - mvw * 0.5,
+            yMin: 0 - mvh * 0.5,
+            dx: mvw / mw,
+            dy: mvh / mh,
             maxIter: 200,
+            yStart: 0,
         });
         minimapWorker.onmessage = function(e) {
             if (e.data.id === -1) {
@@ -310,17 +308,19 @@ canvas.addEventListener("wheel", (e) => {
     const fracX = state.centerX + (mouseX / rect.width - 0.5) * viewWidth;
     const fracY = state.centerY + (mouseY / rect.height - 0.5) * viewHeight;
 
-    const zoomFactor = e.deltaY > 0 ? 1 / 1.15 : 1.15;
+    // Normalize deltaY across browsers/devices (line vs pixel vs page)
+    let delta = e.deltaY;
+    if (e.deltaMode === 1) delta *= 36;  // lines -> pixels
+    if (e.deltaMode === 2) delta *= window.innerHeight; // pages -> pixels
+    delta = Math.max(-150, Math.min(150, delta)); // clamp
+
+    const zoomFactor = Math.pow(1.001, -delta); // smooth, ~1.08x per 80px scroll
     const newZoom = state.zoom * zoomFactor;
 
+    // Zoom toward cursor
     const t = 1 - 1 / zoomFactor;
-    if (e.deltaY < 0) {
-        state.centerX += (fracX - state.centerX) * t;
-        state.centerY += (fracY - state.centerY) * t;
-    } else {
-        state.centerX -= (fracX - state.centerX) * t * (zoomFactor - 1);
-        state.centerY -= (fracY - state.centerY) * t * (zoomFactor - 1);
-    }
+    state.centerX += (fracX - state.centerX) * t;
+    state.centerY += (fracY - state.centerY) * t;
 
     state.zoom = Math.max(0.1, newZoom);
     adaptIterations();
