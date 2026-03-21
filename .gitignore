@@ -1,0 +1,6 @@
+target/
+frontend/dist/
+frontend/wasm/
+*.swp
+*.swo
+.DS_Store

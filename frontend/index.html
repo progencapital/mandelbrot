@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="description" content="Interactive Mandelbrot Set Explorer — zoom, pan, and discover fractal beauty powered by WebAssembly">
+    <meta name="theme-color" content="#0a0a0f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Mandelbrot">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="msapplication-TileColor" content="#0a0a0f">
+    <meta name="format-detection" content="telephone=no">
+
+    <title>Mandelbrot Explorer</title>
+
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+
+    <!-- Preload WASM -->
+    <link rel="preload" href="/wasm/mandelbrot_wasm_bg.wasm" as="fetch" crossorigin>
+
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Canvas -->
+        <canvas id="fractal-canvas"></canvas>
+
+        <!-- Loading overlay -->
+        <div id="loading-overlay">
+            <div class="loader-content">
+                <div class="spinner"></div>
+                <p>Loading Mandelbrot Explorer…</p>
+            </div>
+        </div>
+
+        <!-- HUD: coordinates and zoom -->
+        <div id="hud" class="hud">
+            <span id="hud-coords"></span>
+            <span id="hud-zoom"></span>
+            <span id="hud-iter"></span>
+        </div>
+
+        <!-- Controls panel -->
+        <button id="controls-toggle" class="controls-toggle" aria-label="Toggle controls" title="Toggle controls">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+            </svg>
+        </button>
+
+        <div id="controls-panel" class="controls-panel hidden">
+            <div class="controls-header">
+                <h2>Controls</h2>
+                <button id="controls-close" class="controls-close" aria-label="Close">&times;</button>
+            </div>
+
+            <div class="controls-section">
+                <h3>Places of Interest</h3>
+                <div id="poi-list" class="poi-list"></div>
+            </div>
+
+            <div class="controls-section">
+                <h3>Go to Coordinates</h3>
+                <div class="coord-input-group">
+                    <label>
+                        Real
+                        <input type="number" id="input-real" step="any" value="-0.5" />
+                    </label>
+                    <label>
+                        Imaginary
+                        <input type="number" id="input-imag" step="any" value="0" />
+                    </label>
+                    <label>
+                        Zoom
+                        <input type="number" id="input-zoom" step="any" min="0.1" value="1" />
+                    </label>
+                    <button id="btn-goto" class="btn btn-primary">Go</button>
+                </div>
+            </div>
+
+            <div class="controls-section">
+                <h3>Animation Speed</h3>
+                <div class="slider-group">
+                    <label>
+                        Zoom Speed
+                        <input type="range" id="slider-zoom-speed" min="0.5" max="5" step="0.1" value="2" />
+                        <span id="zoom-speed-val">2.0x</span>
+                    </label>
+                    <label>
+                        Pan Speed
+                        <input type="range" id="slider-pan-speed" min="0.5" max="5" step="0.1" value="2" />
+                        <span id="pan-speed-val">2.0x</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="controls-section">
+                <h3>Render Settings</h3>
+                <div class="slider-group">
+                    <label>
+                        Max Iterations
+                        <input type="range" id="slider-iterations" min="50" max="2000" step="10" value="300" />
+                        <span id="iter-val">300</span>
+                    </label>
+                    <label>
+                        Resolution Scale
+                        <input type="range" id="slider-resolution" min="0.25" max="2" step="0.25" value="1" />
+                        <span id="res-val">1.0x</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="controls-section">
+                <h3>Keyboard Shortcuts</h3>
+                <div class="shortcuts-list">
+                    <kbd>Scroll</kbd> / <kbd>Pinch</kbd> Zoom in/out<br>
+                    <kbd>Drag</kbd> Pan<br>
+                    <kbd>+</kbd> / <kbd>-</kbd> Zoom<br>
+                    <kbd>Arrow keys</kbd> Pan<br>
+                    <kbd>R</kbd> Reset view<br>
+                    <kbd>S</kbd> Toggle controls<br>
+                    <kbd>F</kbd> Fullscreen
+                </div>
+            </div>
+        </div>
+
+        <!-- Minimap -->
+        <canvas id="minimap-canvas" class="minimap" width="160" height="120"></canvas>
+    </div>
+
+    <script type="module" src="/static/app.js"></script>
+</body>
+</html>
