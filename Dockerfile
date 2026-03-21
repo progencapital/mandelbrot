@@ -1,5 +1,5 @@
 # === Stage 1: Build WASM ===
-FROM rust:1.85-bookworm AS wasm-builder
+FROM rust:1.94-bookworm AS wasm-builder
 
 RUN cargo install wasm-pack
 RUN rustup target add wasm32-unknown-unknown
@@ -18,7 +18,7 @@ RUN wasm-pack build crates/mandelbrot-wasm \
     --no-typescript
 
 # === Stage 2: Build Server ===
-FROM rust:1.85-bookworm AS server-builder
+FROM rust:1.94-bookworm AS server-builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock* ./
