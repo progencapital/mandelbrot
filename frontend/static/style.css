@@ -52,6 +52,8 @@ html, body {
     cursor: crosshair;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
+    transform-origin: center center;
+    will-change: transform;
 }
 
 /* ===== Loading Overlay ===== */

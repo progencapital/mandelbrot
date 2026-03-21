@@ -68,6 +68,7 @@ const state = {
     wasmModule: null,
     renderPending: false,
     lastRenderTime: 0,
+    interacting: false,
 };
 
 // ===== DOM Refs =====
@@ -117,6 +118,11 @@ async function initWasm() {
 let renderWidth = 0;
 let renderHeight = 0;
 
+// Track what state was last rendered so we can use CSS transforms for deltas
+let renderedCenterX = -0.5;
+let renderedCenterY = 0;
+let renderedZoom = 1;
+
 function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
     const scale = state.resolutionScale * dpr;
@@ -131,7 +137,43 @@ function resizeCanvas() {
     canvas.height = renderHeight;
 }
 
-function render() {
+// Apply a CSS transform to give instant visual feedback based on
+// the difference between current state and what was last rendered.
+function applyTransformFeedback() {
+    const screenH = window.innerHeight;
+    const viewHeight = 3.0 / renderedZoom;
+    const pixelsPerUnit = screenH / viewHeight;
+
+    // Pan offset in pixels
+    const dx = -(state.centerX - renderedCenterX) * pixelsPerUnit;
+    const dy = -(state.centerY - renderedCenterY) * pixelsPerUnit;
+
+    // Zoom scale ratio
+    const s = state.zoom / renderedZoom;
+
+    canvas.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
+}
+
+function clearTransform() {
+    canvas.style.transform = "";
+}
+
+// Debounce timer for settling after interaction
+let settleTimer = null;
+const SETTLE_DELAY = 80; // ms after last interaction before full render
+
+function scheduleRender() {
+    clearTimeout(settleTimer);
+    // Apply CSS transform immediately for visual feedback
+    applyTransformFeedback();
+    updateHUD();
+
+    settleTimer = setTimeout(() => {
+        renderFull();
+    }, SETTLE_DELAY);
+}
+
+function renderFull() {
     if (!state.wasmModule || state.renderPending) return;
     state.renderPending = true;
 
@@ -154,9 +196,20 @@ function render() {
         ctx.putImageData(imageData, 0, 0);
         state.lastRenderTime = performance.now() - t0;
 
+        // Update tracked rendered state
+        renderedCenterX = state.centerX;
+        renderedCenterY = state.centerY;
+        renderedZoom = state.zoom;
+        clearTransform();
+
         updateHUD();
         state.renderPending = false;
     });
+}
+
+// Immediate render (used for initial load and animations)
+function render() {
+    renderFull();
 }
 
 // Debounced render for resize events
@@ -164,7 +217,6 @@ let resizeTimer = null;
 function onResize() {
     resizeCanvas();
     render();
-    // High-quality re-render after resize settles
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
         resizeCanvas();
@@ -180,7 +232,6 @@ function renderMinimap() {
     const mh = minimapCanvas.height;
 
     if (!minimapImageData) {
-        // Render minimap once at startup
         const pixels = state.wasmModule.render(mw, mh, -0.5, 0, 1, 200);
         minimapImageData = new ImageData(new Uint8ClampedArray(pixels), mw, mh);
     }
@@ -228,6 +279,7 @@ let dragCenterY = 0;
 canvas.addEventListener("pointerdown", (e) => {
     if (state.animating) return;
     isDragging = true;
+    state.interacting = true;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
     dragCenterX = state.centerX;
@@ -243,21 +295,33 @@ canvas.addEventListener("pointermove", (e) => {
     const scale = 3.0 / (state.zoom * window.innerHeight);
     state.centerX = dragCenterX - dx * scale;
     state.centerY = dragCenterY - dy * scale;
-    render();
+    // Use CSS transform for instant feedback, debounce actual render
+    scheduleRender();
 });
 
 canvas.addEventListener("pointerup", (e) => {
-    isDragging = false;
-    canvas.releasePointerCapture(e.pointerId);
-    canvas.style.cursor = "crosshair";
+    if (isDragging) {
+        isDragging = false;
+        state.interacting = false;
+        canvas.releasePointerCapture(e.pointerId);
+        canvas.style.cursor = "crosshair";
+        // Force immediate full render on release
+        clearTimeout(settleTimer);
+        renderFull();
+    }
 });
 
 canvas.addEventListener("pointercancel", (e) => {
     isDragging = false;
+    state.interacting = false;
     canvas.style.cursor = "crosshair";
+    clearTimeout(settleTimer);
+    renderFull();
 });
 
 // ===== Scroll Zoom =====
+let wheelSettleTimer = null;
+
 canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
     if (state.animating) return;
@@ -289,7 +353,9 @@ canvas.addEventListener("wheel", (e) => {
 
     state.zoom = Math.max(0.1, newZoom);
     adaptIterations();
-    render();
+
+    // CSS transform for instant feedback
+    scheduleRender();
 }, { passive: false });
 
 // ===== Pinch Zoom =====
@@ -314,12 +380,12 @@ canvas.addEventListener("pointermove", (e) => {
             state.zoom *= scale;
             state.zoom = Math.max(0.1, state.zoom);
             adaptIterations();
-            render();
+            scheduleRender();
         }
 
         lastPinchDist = dist;
         pinchCenter = { x: cx, y: cy };
-        isDragging = false; // Cancel drag during pinch
+        isDragging = false;
     }
 });
 
@@ -327,6 +393,11 @@ function onPointerEnd(e) {
     activePointers.delete(e.pointerId);
     if (activePointers.size < 2) {
         lastPinchDist = 0;
+        // Render full quality after pinch ends
+        if (activePointers.size === 0) {
+            clearTimeout(settleTimer);
+            renderFull();
+        }
     }
 }
 canvas.addEventListener("pointerup", onPointerEnd);
@@ -343,35 +414,35 @@ document.addEventListener("keydown", (e) => {
         case "ArrowLeft":
         case "a":
             state.centerX -= panAmount;
-            render();
+            scheduleRender();
             break;
         case "ArrowRight":
         case "d":
             state.centerX += panAmount;
-            render();
+            scheduleRender();
             break;
         case "ArrowUp":
         case "w":
             state.centerY -= panAmount;
-            render();
+            scheduleRender();
             break;
         case "ArrowDown":
         case "s":
             if (!e.ctrlKey && !e.metaKey) {
                 state.centerY += panAmount;
-                render();
+                scheduleRender();
             }
             break;
         case "+":
         case "=":
             state.zoom *= 1.5;
             adaptIterations();
-            render();
+            scheduleRender();
             break;
         case "-":
             state.zoom = Math.max(0.1, state.zoom / 1.5);
             adaptIterations();
-            render();
+            scheduleRender();
             break;
         case "r":
         case "R":
@@ -391,7 +462,6 @@ document.addEventListener("keydown", (e) => {
 
 // ===== Adaptive Iterations =====
 function adaptIterations() {
-    // Auto-scale iterations with zoom depth for better detail
     const autoIter = Math.min(2000, Math.max(100, Math.round(200 + 50 * Math.log2(state.zoom + 1))));
     if (sliderIterations.dataset.manual !== "true") {
         state.maxIter = autoIter;
@@ -401,7 +471,6 @@ function adaptIterations() {
 }
 
 // ===== Animation Engine =====
-// Smooth animated transitions: zoom out → pan → zoom in
 function animateTo(targetX, targetY, targetZoom) {
     if (state.animating) return;
     state.animating = true;
@@ -411,13 +480,8 @@ function animateTo(targetX, targetY, targetZoom) {
     const startY = state.centerY;
     const startZoom = state.zoom;
 
-    // Phase 1: Zoom out to "overview" level
-    // Phase 2: Pan to target
-    // Phase 3: Zoom in to target
+    const overviewZoom = Math.min(startZoom, targetZoom, 1);
 
-    const overviewZoom = Math.min(startZoom, targetZoom, 1); // Go to at least overview
-
-    const totalPhases = 3;
     const zoomOutDuration = 1200 / state.zoomSpeed;
     const panDuration = 1000 / state.panSpeed;
     const zoomInDuration = 1500 / state.zoomSpeed;
@@ -434,7 +498,6 @@ function animateTo(targetX, targetY, targetZoom) {
     }
 
     function lerpZoom(from, to, t) {
-        // Logarithmic interpolation for smooth zoom
         const logFrom = Math.log(from);
         const logTo = Math.log(to);
         return Math.exp(logFrom + (logTo - logFrom) * t);
@@ -445,11 +508,9 @@ function animateTo(targetX, targetY, targetZoom) {
         const elapsed = timestamp - startTime;
 
         if (phase === 0) {
-            // Phase 1: Zoom out
             const t = Math.min(1, elapsed / zoomOutDuration);
             const et = easeInOutCubic(t);
             state.zoom = lerpZoom(startZoom, overviewZoom, et);
-            // Slightly drift toward target during zoom out
             state.centerX = startX + (targetX - startX) * et * 0.2;
             state.centerY = startY + (targetY - startY) * et * 0.2;
             adaptIterations();
@@ -460,7 +521,6 @@ function animateTo(targetX, targetY, targetZoom) {
                 startTime = timestamp;
             }
         } else if (phase === 1) {
-            // Phase 2: Pan to target
             const panStartX = state.centerX;
             const panStartY = state.centerY;
             const t = Math.min(1, elapsed / panDuration);
@@ -476,7 +536,6 @@ function animateTo(targetX, targetY, targetZoom) {
                 startTime = timestamp;
             }
         } else if (phase === 2) {
-            // Phase 3: Zoom in
             const t = Math.min(1, elapsed / zoomInDuration);
             const et = easeOutExpo(t);
             state.zoom = lerpZoom(overviewZoom, targetZoom, et);
@@ -506,7 +565,6 @@ function toggleControls() {
 controlsToggle.addEventListener("click", toggleControls);
 controlsClose.addEventListener("click", () => controlsPanel.classList.add("hidden"));
 
-// Close panel on outside click (mobile)
 canvas.addEventListener("pointerdown", () => {
     if (!controlsPanel.classList.contains("hidden")) {
         controlsPanel.classList.add("hidden");
