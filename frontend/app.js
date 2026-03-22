@@ -1,7 +1,6 @@
 // Mandelbrot Explorer
-// Double-buffered, atomic-swap, chained render architecture.
-// CSS transforms provide instant feedback. Workers render in background.
-// Visible canvas only updates when a complete frame is ready — no tearing, no flash.
+// Double-buffered atomic swap. CSS translate for pan only (geometrically exact).
+// No CSS scale — zoom always re-renders via worker pool. Chained render pipeline.
 
 const POI = [
     { name: "Full Set",        x: -0.5,   y: 0,    z: 1,      d: "The complete Mandelbrot set" },
@@ -17,7 +16,7 @@ const POI = [
 ];
 
 // ===== State =====
-const V = {  // view state
+const V = {
     cx: -0.5, cy: 0, zoom: 1,
     maxIter: 300,
     resFactor: 1,
@@ -54,19 +53,15 @@ function resize() {
     canvas.height = rH;
     canvas.style.width  = window.innerWidth  + "px";
     canvas.style.height = window.innerHeight + "px";
-    // Resize offscreen buffer
     offscreen.width = rW;
     offscreen.height = rH;
 }
 
 // ===== Double buffer =====
-// Workers render strips to offscreen. When all done, atomic blit to visible.
 const offscreen = document.createElement("canvas");
 const offCtx = offscreen.getContext("2d");
 
 // ===== Render engine =====
-// Only one render in flight at a time. If state changes mid-render, dirty flag
-// triggers a chained re-render on completion. No pile-up, no waste.
 let rendering = false;
 let dirty = false;
 let renderId = 0;
@@ -74,17 +69,13 @@ let activeId = 0;
 let chunks = 0;
 let maxMs = 0;
 
-// What the visible canvas currently shows (for CSS transform delta)
+// What the visible canvas currently shows
 let shownCx = -0.5, shownCy = 0, shownZoom = 1;
-
-// What we're currently rendering
+// What is currently being rendered
 let pendCx = 0, pendCy = 0, pendZoom = 0;
 
 function render() {
-    if (rendering) {
-        dirty = true;
-        return;
-    }
+    if (rendering) { dirty = true; return; }
     rendering = true;
     dirty = false;
     renderId++;
@@ -100,8 +91,7 @@ function render() {
     const dy = vH / rH;
 
     const rows = Math.ceil(rH / NW);
-    chunks = 0;
-    maxMs = 0;
+    chunks = 0; maxMs = 0;
 
     for (let i = 0; i < NW; i++) {
         const y0 = i * rows;
@@ -120,58 +110,48 @@ function onChunk(e) {
     const d = e.data;
     if (d.id !== activeId) return;
 
-    // Paint to offscreen buffer
-    const img = new ImageData(new Uint8ClampedArray(d.buf), d.w, d.h);
-    offCtx.putImageData(img, 0, d.y);
-
+    offCtx.putImageData(new ImageData(new Uint8ClampedArray(d.buf), d.w, d.h), 0, d.y);
     if (d.ms > maxMs) maxMs = d.ms;
     if (--chunks > 0) return;
 
-    // All strips done — atomic swap
+    // All strips done — atomic swap in next paint
     V.renderMs = maxMs;
+    const swapCx = pendCx, swapCy = pendCy, swapZoom = pendZoom;
 
     requestAnimationFrame(() => {
-        // Blit offscreen → visible in one draw call
         ctx.drawImage(offscreen, 0, 0);
+        shownCx = swapCx; shownCy = swapCy; shownZoom = swapZoom;
 
-        // Update tracking
-        shownCx = pendCx;
-        shownCy = pendCy;
-        shownZoom = pendZoom;
-
-        // If current state matches what we just rendered, clear transform
-        // Otherwise apply transform to compensate for drift during render
-        syncTransform();
+        // If user panned during render, re-apply translate for the delta
+        panTransform();
         updateHUD();
 
         rendering = false;
-
-        // Chain next render if state changed during this one
         if (dirty) render();
     });
 }
 
-// ===== CSS Transform =====
-// Computes the transform needed to visually shift the shown render to match current state.
-function syncTransform() {
-    if (V.cx === shownCx && V.cy === shownCy && V.zoom === shownZoom) {
+// ===== Pan-only CSS translate =====
+// Only used during drag. Geometrically exact — no scale, no zoom transform.
+function panTransform() {
+    if (V.zoom !== shownZoom || (V.cx === shownCx && V.cy === shownCy)) {
         canvas.style.transform = "";
         return;
     }
     const ppu = window.innerHeight / (3.0 / shownZoom);
     const tx = -(V.cx - shownCx) * ppu;
     const ty = -(V.cy - shownCy) * ppu;
-    const sc = V.zoom / shownZoom;
-    canvas.style.transform = `translate(${tx}px,${ty}px) scale(${sc})`;
+    canvas.style.transform = `translate(${tx}px,${ty}px)`;
 }
 
-// ===== Debounced render on interaction =====
+function clearTransform() { canvas.style.transform = ""; }
+
+// ===== Render scheduling =====
 let settleTimer = null;
-function scheduleRender() {
-    syncTransform();
-    updateHUD();
+
+function renderSoon() {
     clearTimeout(settleTimer);
-    settleTimer = setTimeout(render, 70);
+    settleTimer = setTimeout(render, 50);
 }
 
 function renderNow() {
@@ -181,8 +161,8 @@ function renderNow() {
 
 // ===== Minimap =====
 let mmData = null;
-const mmW = new Worker("/worker.js");
-mmW.onmessage = e => {
+const mmWorker = new Worker("/worker.js");
+mmWorker.onmessage = e => {
     if (e.data.id !== -1) return;
     mmData = new ImageData(new Uint8ClampedArray(e.data.buf), mmC.width, mmC.height);
     drawMM();
@@ -191,7 +171,7 @@ mmW.onmessage = e => {
 function initMM() {
     const mw = mmC.width, mh = mmC.height;
     const vh = 3.0, vw = vh * (mw / mh);
-    mmW.postMessage({
+    mmWorker.postMessage({
         id: -1, w: mw, h: mh,
         xMin: -0.5 - vw * 0.5, yMin: -vh * 0.5,
         dx: vw / mw, dy: vh / mh,
@@ -205,11 +185,13 @@ function drawMM() {
     mmX.putImageData(mmData, 0, 0);
     const vw = 3.0 / V.zoom, vh = vw * (mh / mw);
     const tw = 3.0, th = tw * (mh / mw);
-    const x = ((V.cx - vw/2) - (-0.5 - tw/2)) / tw * mw;
-    const y = ((V.cy - vh/2) - (0 - th/2)) / th * mh;
     mmX.strokeStyle = "rgba(108,123,255,0.8)";
     mmX.lineWidth = 1.5;
-    mmX.strokeRect(x, y, vw/tw*mw, vh/th*mh);
+    mmX.strokeRect(
+        ((V.cx - vw/2) - (-0.5 - tw/2)) / tw * mw,
+        ((V.cy - vh/2) - (0 - th/2)) / th * mh,
+        vw / tw * mw, vh / th * mh
+    );
 }
 
 // ===== HUD =====
@@ -243,8 +225,8 @@ canvas.addEventListener("pointermove", e => {
     const scale = 3.0 / (V.zoom * window.innerHeight);
     V.cx = dcx - (e.clientX - dsx) * scale;
     V.cy = dcy - (e.clientY - dsy) * scale;
-    // CSS transform only — zero computation, zero latency
-    syncTransform();
+    // Pure CSS translate — geometrically exact, zero computation
+    panTransform();
     updateHUD();
 });
 
@@ -253,16 +235,19 @@ canvas.addEventListener("pointerup", e => {
     dragging = false;
     canvas.releasePointerCapture(e.pointerId);
     canvas.style.cursor = "crosshair";
+    clearTransform();
     renderNow();
 });
 
 canvas.addEventListener("pointercancel", () => {
     dragging = false;
     canvas.style.cursor = "crosshair";
+    clearTransform();
     renderNow();
 });
 
 // ===== Wheel Zoom =====
+// No CSS transform — just debounced re-render. Workers are fast enough.
 canvas.addEventListener("wheel", e => {
     e.preventDefault();
     if (V.animating) return;
@@ -286,7 +271,8 @@ canvas.addEventListener("wheel", e => {
     V.cy += (fy - V.cy) * t;
     V.zoom = nz;
     adaptIter();
-    scheduleRender();
+    renderSoon();
+    updateHUD();
 }, { passive: false });
 
 // ===== Pinch Zoom =====
@@ -302,7 +288,8 @@ canvas.addEventListener("pointermove", e => {
         if (lastPinch > 0) {
             V.zoom = Math.max(0.1, V.zoom * (dist / lastPinch));
             adaptIter();
-            scheduleRender();
+            renderSoon();
+            updateHUD();
         }
         lastPinch = dist;
         dragging = false;
@@ -341,15 +328,14 @@ function adaptIter() {
     const v = Math.min(2000, Math.max(100, 200 + 50 * Math.log2(V.zoom + 1) + 0.5 | 0));
     const sl = $("sl-iter");
     if (sl.dataset.manual !== "true") {
-        V.maxIter = v;
-        sl.value = v;
-        $("v-iter").textContent = v;
+        V.maxIter = v; sl.value = v; $("v-iter").textContent = v;
     }
 }
 
 // ===== Fly-to Animation =====
-// 3 phases: zoom out → pan → zoom in. Uses CSS transforms for smooth visuals,
-// chained worker renders keep the image updating at max throughput.
+// 3 phases: zoom out → pan → zoom in.
+// Each rAF: update state, fire render (chains at worker speed).
+// No CSS transforms during animation — every frame is a real render.
 function flyTo(tx, ty, tz) {
     if (V.animating) return;
     V.animating = true;
@@ -394,10 +380,8 @@ function flyTo(tx, ty, tz) {
             }
         }
 
-        // CSS transform for instant visual update; chained render fills in detail
-        syncTransform();
         updateHUD();
-        render(); // will chain if already rendering — no pile-up
+        render();
         requestAnimationFrame(step);
     }
     requestAnimationFrame(step);
@@ -448,8 +432,7 @@ $("sl-iter").addEventListener("input", e => {
 $("sl-res").addEventListener("input", e => {
     V.resFactor = parseFloat(e.target.value);
     $("v-res").textContent = V.resFactor.toFixed(2) + "x";
-    resize();
-    renderNow();
+    resize(); renderNow();
 });
 
 function toggleFS() {
