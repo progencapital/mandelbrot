@@ -1,459 +1,498 @@
-// Mandelbrot Explorer
-// Double-buffered atomic swap. CSS translate for pan only (geometrically exact).
-// No CSS scale — zoom always re-renders via worker pool. Chained render pipeline.
+'use strict';
 
+// ═══════════════════════════════════════════════════════════════════════
+//  Mandelbrot Explorer — WebGL2 GPU-accelerated rendering
+//  Every pixel computed in parallel on the GPU every frame at 60fps.
+//  No workers, no buffers, no swaps — just uniform updates + drawArrays.
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── POINTS OF INTEREST ─────────────────────────────────────────────────
 const POI = [
-    { name: "Full Set",        x: -0.5,   y: 0,    z: 1,      d: "The complete Mandelbrot set" },
-    { name: "Seahorse Valley", x: -0.7463, y: 0.1102, z: 200,  d: "Intricate spiral patterns" },
-    { name: "Elephant Valley", x: 0.2815,  y: 0.0085, z: 150,  d: "Elephant-trunk formations" },
-    { name: "Double Spiral",   x: -0.0452407411, y: 0.9868162204352258, z: 2000, d: "Mesmerizing double spiral" },
-    { name: "Lightning",       x: -1.315180982097868, y: 0.073481649996795, z: 50000, d: "Fractal lightning patterns" },
-    { name: "Starfish",        x: -0.3558404221, y: 0.6428140572, z: 5000, d: "Star-shaped formations" },
-    { name: "Spiral Galaxy",   x: -0.7436439, y: 0.1318259, z: 50000, d: "Galaxy-like spiraling structure" },
-    { name: "Mini Mandelbrot", x: -1.7497591451303665, y: 0.0000000388, z: 300000, d: "Self-similar miniature copy" },
-    { name: "Tendrils",        x: -0.10109636384562, y: 0.9562865108091415, z: 20000, d: "Delicate boundary formations" },
-    { name: "Quad Spiral",     x: 0.27322626, y: 0.595153338, z: 60000, d: "Four interleaving spirals" },
+    // Classic Regions
+    { cat:'Classic',  name:'Seahorse Valley',  x:-0.7436438870371587, y:0.1318259042053119,  z:200,    depth:'200×'   },
+    { cat:'Classic',  name:'Elephant Valley',  x:0.30820836,          y:0.01990000,           z:150,    depth:'150×'   },
+    { cat:'Classic',  name:'Triple Spiral',    x:-0.158586639,        y:1.033900685,          z:250,    depth:'250×'   },
+    { cat:'Classic',  name:'West Spike',       x:-1.99985,            y:0.0,                  z:2000,   depth:'2e3×'   },
+    // Deep Spirals
+    { cat:'Deep Spirals', name:'Nautilus',       x:-0.74364388703, y:0.13182590421, z:8000,  depth:'8e3×'   },
+    { cat:'Deep Spirals', name:'Double Whorl',   x:-0.74529938,    y:0.11300000,    z:3000,  depth:'3e3×'   },
+    { cat:'Deep Spirals', name:'Fibonacci Arms', x:-0.7017681,     y:0.3839830,     z:2000,  depth:'2e3×'   },
+    { cat:'Deep Spirals', name:'Spiral Nebula',  x:-0.7453,        y:0.1130,        z:700,   depth:'700×'   },
+    // Mini Mandelbrots
+    { cat:'Mini Brots', name:'Infant Brot',    x:-1.7549651,    y:0.0,          z:800,   depth:'800×'   },
+    { cat:'Mini Brots', name:'Embedded Brot',  x:-0.17476619,   y:1.06554016,   z:3000,  depth:'3e3×'   },
+    { cat:'Mini Brots', name:'Distant Clone',  x:-1.62917,      y:-0.0203968,   z:1000,  depth:'1e3×'   },
+    // Tendrils
+    { cat:'Tendrils', name:'Neural Web',   x:-0.56062,  y:-0.64228, z:500,   depth:'500×'   },
+    { cat:'Tendrils', name:'Dendrite',     x:0.0,       y:1.0,      z:300,   depth:'300×'   },
+    { cat:'Tendrils', name:'Feather Edge', x:0.42884,   y:-0.23116, z:300,   depth:'300×'   },
+    { cat:'Tendrils', name:'Lightning',    x:-0.503397, y:0.563199, z:600,   depth:'600×'   },
+    // Extra deep
+    { cat:'Deep Zoom', name:'Double Spiral',   x:-0.0452407411, y:0.9868162204352258, z:2000,  depth:'2e3×'   },
+    { cat:'Deep Zoom', name:'Starfish',        x:-0.3558404221, y:0.6428140572,       z:5000,  depth:'5e3×'   },
+    { cat:'Deep Zoom', name:'Spiral Galaxy',   x:-0.7436439,    y:0.1318259,          z:50000, depth:'5e4×'   },
+    { cat:'Deep Zoom', name:'Mini Mandelbrot', x:-1.7497591451303665, y:0.0000000388,  z:300000, depth:'3e5×' },
+    { cat:'Deep Zoom', name:'Quad Spiral',     x:0.27322626,    y:0.595153338,        z:60000, depth:'6e4×'   },
 ];
 
-// ===== State =====
-const V = {
-    cx: -0.5, cy: 0, zoom: 1,
-    maxIter: 300,
-    resFactor: 1,
-    zoomSpeed: 2, panSpeed: 2,
-    animating: false,
-    renderMs: 0,
-};
+// ── WEBGL2 SETUP ───────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const gl = canvas.getContext('webgl2', {
+    antialias: false,
+    preserveDrawingBuffer: false,
+    powerPreference: 'high-performance',
+    desynchronized: true,
+});
 
-// ===== DOM =====
-const $ = id => document.getElementById(id);
-const canvas = $("canvas");
-const ctx    = canvas.getContext("2d");
-const mmC    = $("minimap");
-const mmX    = mmC.getContext("2d");
-
-// ===== Workers =====
-const NW = Math.min(navigator.hardwareConcurrency || 4, 16);
-const workers = [];
-for (let i = 0; i < NW; i++) {
-    const w = new Worker("/worker.js");
-    w.onmessage = onChunk;
-    workers.push(w);
+if (!gl) {
+    document.body.innerHTML = '<p style="color:#ff3d6e;padding:40px;font-family:monospace">WebGL2 not available — your browser does not support GPU-accelerated rendering.</p>';
+    throw new Error('WebGL2 not available');
 }
 
-// ===== Canvas sizing =====
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
 let rW = 0, rH = 0;
 
 function resize() {
-    const dpr = window.devicePixelRatio || 1;
-    const s = V.resFactor * dpr;
-    rW = window.innerWidth * s + 0.5 | 0;
-    rH = window.innerHeight * s + 0.5 | 0;
-    canvas.width = rW;
-    canvas.height = rH;
-    canvas.style.width  = window.innerWidth  + "px";
-    canvas.style.height = window.innerHeight + "px";
-    offscreen.width = rW;
-    offscreen.height = rH;
+    const w = Math.floor(window.innerWidth  * DPR);
+    const h = Math.floor(window.innerHeight * DPR);
+    if (w === rW && h === rH) return;
+    canvas.width = rW = w;
+    canvas.height = rH = h;
+    gl.viewport(0, 0, rW, rH);
+}
+window.addEventListener('resize', resize, { passive: true });
+
+// ── Vertex shader ───────────────────────────────────────────────────
+const VERT = `#version 300 es
+precision highp float;
+in  vec2 pos;
+out vec2 uv;
+void main() { gl_Position = vec4(pos,0,1); uv = pos; }`;
+
+// ── Fragment shader — 4x unrolled loop, smooth escape ───────────────
+const FRAG = `#version 300 es
+precision highp float;
+in  vec2  uv;
+out vec4  o;
+
+uniform vec2  center;
+uniform float zoom;
+uniform float maxIter;
+uniform vec2  res;
+
+vec3 pal(float t) {
+  return clamp(
+    vec3(0.5,0.5,0.5)
+    + vec3(0.5,0.5,0.5) * cos(6.28318*(vec3(1.0,1.0,0.8)*t + vec3(0.0,0.2,0.55))),
+    0.0, 1.0);
 }
 
-// ===== Double buffer =====
-const offscreen = document.createElement("canvas");
-const offCtx = offscreen.getContext("2d");
+void main() {
+  float ar = res.x / res.y;
+  float cr = center.x + uv.x * ar / zoom;
+  float ci = center.y + uv.y        / zoom;
 
-// ===== Render engine =====
-let rendering = false;
-let dirty = false;
-let renderId = 0;
-let activeId = 0;
-let chunks = 0;
-let maxMs = 0;
+  float zr=0., zi=0., zr2=0., zi2=0.;
+  float n = 0.;
+  float lim = maxIter - 4.;
 
-// What the visible canvas currently shows
-let shownCx = -0.5, shownCy = 0, shownZoom = 1;
-// What is currently being rendered
-let pendCx = 0, pendCy = 0, pendZoom = 0;
+  for (int i = 0; i < 512; i++) {
+    if (n >= lim || zr2+zi2 > 256.) break;
+    zi=2.*zr*zi+ci; zr=zr2-zi2+cr; n+=1.; zr2=zr*zr; zi2=zi*zi; if(zr2+zi2>256.) break;
+    zi=2.*zr*zi+ci; zr=zr2-zi2+cr; n+=1.; zr2=zr*zr; zi2=zi*zi; if(zr2+zi2>256.) break;
+    zi=2.*zr*zi+ci; zr=zr2-zi2+cr; n+=1.; zr2=zr*zr; zi2=zi*zi; if(zr2+zi2>256.) break;
+    zi=2.*zr*zi+ci; zr=zr2-zi2+cr; n+=1.; zr2=zr*zr; zi2=zi*zi;
+  }
 
-function render() {
-    if (rendering) { dirty = true; return; }
-    rendering = true;
-    dirty = false;
-    renderId++;
-    activeId = renderId;
+  if (n >= maxIter) {
+    o = vec4(0,0,0,1);
+  } else {
+    float t = (n + 2. - log2(log2(zr2+zi2)*0.5)) / maxIter;
+    o = vec4(pal(t * 2.8 + 0.1), 1.0);
+  }
+}`;
 
-    pendCx = V.cx; pendCy = V.cy; pendZoom = V.zoom;
+function mkShader(src, type) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+        console.error(gl.getShaderInfoLog(s));
+    return s;
+}
 
-    const vH = 3.0 / V.zoom;
-    const vW = vH * (rW / rH);
-    const xMin = V.cx - vW * 0.5;
-    const yMin = V.cy - vH * 0.5;
-    const dx = vW / rW;
-    const dy = vH / rH;
+const prog = gl.createProgram();
+gl.attachShader(prog, mkShader(VERT, gl.VERTEX_SHADER));
+gl.attachShader(prog, mkShader(FRAG, gl.FRAGMENT_SHADER));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+    console.error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
 
-    const rows = Math.ceil(rH / NW);
-    chunks = 0; maxMs = 0;
+const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+const vbuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+const pLoc = gl.getAttribLocation(prog, 'pos');
+gl.enableVertexAttribArray(pLoc);
+gl.vertexAttribPointer(pLoc, 2, gl.FLOAT, false, 0, 0);
 
-    for (let i = 0; i < NW; i++) {
-        const y0 = i * rows;
-        const ch = Math.min(rows, rH - y0);
-        if (ch <= 0) continue;
-        chunks++;
-        workers[i].postMessage({
-            id: activeId, w: rW, h: ch,
-            xMin, yMin: yMin + y0 * dy,
-            dx, dy, maxIter: V.maxIter, y: y0,
-        });
+const uCenter = gl.getUniformLocation(prog, 'center');
+const uZoom   = gl.getUniformLocation(prog, 'zoom');
+const uIter   = gl.getUniformLocation(prog, 'maxIter');
+const uRes    = gl.getUniformLocation(prog, 'res');
+
+// ── STATE ──────────────────────────────────────────────────────────────
+let cx = -0.5, cy = 0.0, zoom = 0.42;
+let maxIter = 256;
+let autoZoom = false;
+let animating = false;
+
+// ── EASING ─────────────────────────────────────────────────────────────
+const ss  = t => t*t*t*(t*(t*6-15)+10);  // smootherstep (Perlin quintic)
+const ei3 = t => t*t*t;                   // ease-in cubic
+
+// ── CINEMATIC NAVIGATION ───────────────────────────────────────────────
+const OV = 0.42;  // overview zoom — full set visible
+
+function zoomToPoint(tx, ty, tz, dur = 9.0) {
+    if (animating) return;
+    animating = true;
+    setInteractive(false);
+
+    const x0 = cx, y0 = cy, z0 = zoom;
+
+    const nearOV = z0 <= OV * 1.5;
+    const P1 = nearOV ? 0.03 : 0.25;
+    const P2 = nearOV ? 0.60 : 0.68;
+
+    const t0 = performance.now();
+    const durMs = dur * 1000;
+
+    function frame(now) {
+        const p = Math.min((now - t0) / durMs, 1);
+
+        if (p <= P1) {
+            const pp = ss(p / P1);
+            zoom = Math.exp(Math.log(z0) * (1-pp) + Math.log(OV) * pp);
+            cx = x0; cy = y0;
+        } else if (p <= P2) {
+            const pp = ss((p - P1) / (P2 - P1));
+            zoom = OV;
+            cx = x0 + (tx - x0) * pp;
+            cy = y0 + (ty - y0) * pp;
+        } else {
+            const pp = ei3((p - P2) / (1 - P2));
+            cx = tx; cy = ty;
+            zoom = Math.exp(Math.log(OV) * (1-pp) + Math.log(tz) * pp);
+        }
+
+        if (p < 1) {
+            requestAnimationFrame(frame);
+        } else {
+            cx = tx; cy = ty; zoom = tz;
+            animating = false;
+            setInteractive(true);
+            updateCoordInputs();
+        }
     }
+
+    requestAnimationFrame(frame);
 }
 
-function onChunk(e) {
-    const d = e.data;
-    if (d.id !== activeId) return;
-
-    offCtx.putImageData(new ImageData(new Uint8ClampedArray(d.buf), d.w, d.h), 0, d.y);
-    if (d.ms > maxMs) maxMs = d.ms;
-    if (--chunks > 0) return;
-
-    // All strips done — atomic swap in next paint
-    V.renderMs = maxMs;
-    const swapCx = pendCx, swapCy = pendCy, swapZoom = pendZoom;
-
-    requestAnimationFrame(() => {
-        ctx.drawImage(offscreen, 0, 0);
-        shownCx = swapCx; shownCy = swapCy; shownZoom = swapZoom;
-
-        // If user panned during render, re-apply translate for the delta
-        panTransform();
-        updateHUD();
-
-        rendering = false;
-        if (dirty) render();
-    });
-}
-
-// ===== Pan-only CSS translate =====
-// Only used during drag. Geometrically exact — no scale, no zoom transform.
-function panTransform() {
-    if (V.zoom !== shownZoom || (V.cx === shownCx && V.cy === shownCy)) {
-        canvas.style.transform = "";
-        return;
-    }
-    const ppu = window.innerHeight / (3.0 / shownZoom);
-    const tx = -(V.cx - shownCx) * ppu;
-    const ty = -(V.cy - shownCy) * ppu;
-    canvas.style.transform = `translate(${tx}px,${ty}px)`;
-}
-
-function clearTransform() { canvas.style.transform = ""; }
-
-// ===== Render scheduling =====
-let settleTimer = null;
-
-function renderSoon() {
-    clearTimeout(settleTimer);
-    settleTimer = setTimeout(render, 50);
-}
-
-function renderNow() {
-    clearTimeout(settleTimer);
-    render();
-}
-
-// ===== Minimap =====
-let mmData = null;
-const mmWorker = new Worker("/worker.js");
-mmWorker.onmessage = e => {
-    if (e.data.id !== -1) return;
-    mmData = new ImageData(new Uint8ClampedArray(e.data.buf), mmC.width, mmC.height);
-    drawMM();
-};
-
-function initMM() {
-    const mw = mmC.width, mh = mmC.height;
-    const vh = 3.0, vw = vh * (mw / mh);
-    mmWorker.postMessage({
-        id: -1, w: mw, h: mh,
-        xMin: -0.5 - vw * 0.5, yMin: -vh * 0.5,
-        dx: vw / mw, dy: vh / mh,
-        maxIter: 200, y: 0,
-    });
-}
-
-function drawMM() {
-    if (!mmData) return;
-    const mw = mmC.width, mh = mmC.height;
-    mmX.putImageData(mmData, 0, 0);
-    const vw = 3.0 / V.zoom, vh = vw * (mh / mw);
-    const tw = 3.0, th = tw * (mh / mw);
-    mmX.strokeStyle = "rgba(108,123,255,0.8)";
-    mmX.lineWidth = 1.5;
-    mmX.strokeRect(
-        ((V.cx - vw/2) - (-0.5 - tw/2)) / tw * mw,
-        ((V.cy - vh/2) - (0 - th/2)) / th * mh,
-        vw / tw * mw, vh / th * mh
-    );
-}
-
-// ===== HUD =====
-function updateHUD() {
-    $("hud-c").textContent = `Re: ${V.cx.toFixed(12)}  Im: ${V.cy.toFixed(12)}`;
-    $("hud-z").textContent = `Zoom: ${fmtZ(V.zoom)}`;
-    $("hud-ms").textContent = `${V.renderMs.toFixed(0)}ms`;
-    drawMM();
-}
-function fmtZ(z) {
-    if (z >= 1e12) return z.toExponential(2);
-    if (z >= 1e6) return (z/1e6).toFixed(1) + "M";
-    if (z >= 1e3) return (z/1e3).toFixed(1) + "K";
-    return z.toFixed(1);
-}
-
-// ===== Drag to Pan =====
-let dragging = false, dsx = 0, dsy = 0, dcx = 0, dcy = 0;
-
-canvas.addEventListener("pointerdown", e => {
-    if (V.animating) return;
-    dragging = true;
-    dsx = e.clientX; dsy = e.clientY;
-    dcx = V.cx; dcy = V.cy;
-    canvas.setPointerCapture(e.pointerId);
-    canvas.style.cursor = "grabbing";
-});
-
-canvas.addEventListener("pointermove", e => {
-    if (!dragging) return;
-    const scale = 3.0 / (V.zoom * window.innerHeight);
-    V.cx = dcx - (e.clientX - dsx) * scale;
-    V.cy = dcy - (e.clientY - dsy) * scale;
-    // Pure CSS translate — geometrically exact, zero computation
-    panTransform();
-    updateHUD();
-});
-
-canvas.addEventListener("pointerup", e => {
-    if (!dragging) return;
-    dragging = false;
-    canvas.releasePointerCapture(e.pointerId);
-    canvas.style.cursor = "crosshair";
-    clearTransform();
-    renderNow();
-});
-
-canvas.addEventListener("pointercancel", () => {
-    dragging = false;
-    canvas.style.cursor = "crosshair";
-    clearTransform();
-    renderNow();
-});
-
-// ===== Wheel Zoom =====
-// No CSS transform — just debounced re-render. Workers are fast enough.
-canvas.addEventListener("wheel", e => {
+// ── INPUT — Mouse wheel zoom ───────────────────────────────────────────
+canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    if (V.animating) return;
-
+    if (animating) return;
     const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    const asp = rect.width / rect.height;
-    const vH = 3.0 / V.zoom, vW = vH * asp;
-    const fx = V.cx + (mx / rect.width  - 0.5) * vW;
-    const fy = V.cy + (my / rect.height - 0.5) * vH;
-
-    let d = e.deltaY;
-    if (e.deltaMode === 1) d *= 36;
-    if (e.deltaMode === 2) d *= window.innerHeight;
-    d = Math.max(-300, Math.min(300, d));
-
-    const zf = Math.pow(1.0012, -d);
-    const nz = Math.max(0.1, V.zoom * zf);
-    const t = 1 - V.zoom / nz;
-    V.cx += (fx - V.cx) * t;
-    V.cy += (fy - V.cy) * t;
-    V.zoom = nz;
-    adaptIter();
-    renderSoon();
-    updateHUD();
+    const uvx =  (e.clientX - rect.left) / rect.width  * 2 - 1;
+    const uvy = -((e.clientY - rect.top)  / rect.height * 2 - 1);
+    const ar = rect.width / rect.height;
+    const wx = cx + uvx * ar / zoom;
+    const wy = cy + uvy       / zoom;
+    const f  = e.deltaY < 0 ? 1.14 : 0.877;
+    zoom = Math.max(0.15, Math.min(zoom * f, 1e13));
+    cx = wx - uvx * ar / zoom;
+    cy = wy - uvy       / zoom;
 }, { passive: false });
 
-// ===== Pinch Zoom =====
-let lastPinch = 0;
-const ptrs = new Map();
-
-canvas.addEventListener("pointerdown", e => ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }));
-canvas.addEventListener("pointermove", e => {
-    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (ptrs.size === 2) {
-        const [a, b] = [...ptrs.values()];
-        const dist = Math.hypot(b.x - a.x, b.y - a.y);
-        if (lastPinch > 0) {
-            V.zoom = Math.max(0.1, V.zoom * (dist / lastPinch));
-            adaptIter();
-            renderSoon();
-            updateHUD();
-        }
-        lastPinch = dist;
-        dragging = false;
-    }
+// ── Input — Mouse drag pan ─────────────────────────────────────────────
+let drag = false, dx = 0, dy = 0;
+canvas.addEventListener('mousedown', e => {
+    if (animating) return;
+    drag = true; dx = e.clientX; dy = e.clientY;
+    canvas.classList.add('grabbing');
 });
-function ptrEnd(e) {
-    ptrs.delete(e.pointerId);
-    if (ptrs.size < 2) {
-        lastPinch = 0;
-        if (ptrs.size === 0 && !dragging) renderNow();
-    }
-}
-canvas.addEventListener("pointerup", ptrEnd);
-canvas.addEventListener("pointercancel", ptrEnd);
+window.addEventListener('mousemove', e => {
+    if (!drag) return;
+    const W = window.innerWidth, H = window.innerHeight;
+    const ar = W / H;
+    cx -= (e.clientX - dx) / H * 2 * ar / zoom;
+    cy += (e.clientY - dy) / H * 2        / zoom;
+    dx = e.clientX; dy = e.clientY;
+}, { passive: true });
+window.addEventListener('mouseup', () => { drag = false; canvas.classList.remove('grabbing'); });
 
-// ===== Keyboard =====
-document.addEventListener("keydown", e => {
-    if (e.target.tagName === "INPUT" || V.animating) return;
-    const p = 0.1 / V.zoom * 3.0;
+// ── Input — Touch ──────────────────────────────────────────────────────
+const touches = new Map();
+let pinchD0 = 0, pinchZ0 = 0;
+
+canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) touches.set(t.identifier, {x:t.clientX, y:t.clientY});
+    if (e.touches.length === 2) {
+        const [a,b] = e.touches;
+        pinchD0 = Math.hypot(b.clientX-a.clientX, b.clientY-a.clientY);
+        pinchZ0 = zoom;
+    }
+}, {passive:false});
+
+canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (animating) return;
+    if (e.touches.length === 1) {
+        const t = e.touches[0], p = touches.get(t.identifier);
+        if (!p) return;
+        const W = window.innerWidth, H = window.innerHeight;
+        const ar = W / H;
+        cx -= (t.clientX - p.x) / H * 2 * ar / zoom;
+        cy += (t.clientY - p.y) / H * 2        / zoom;
+        touches.set(t.identifier, {x:t.clientX, y:t.clientY});
+    } else if (e.touches.length === 2) {
+        const [a,b] = e.touches;
+        zoom = Math.max(0.15, Math.min(pinchZ0*Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY)/pinchD0, 1e13));
+    }
+}, {passive:false});
+
+canvas.addEventListener('touchend', e => {
+    for (const t of e.changedTouches) touches.delete(t.identifier);
+}, {passive:false});
+
+// ── Keyboard ───────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if (animating && e.key !== 'Escape') return;
+
+    const p = 0.08 / zoom;
+    const ar = window.innerWidth / window.innerHeight;
     switch (e.key) {
-        case "ArrowLeft": case "a": V.cx -= p; renderNow(); break;
-        case "ArrowRight": case "d": V.cx += p; renderNow(); break;
-        case "ArrowUp": case "w": V.cy -= p; renderNow(); break;
-        case "ArrowDown": case "s":
-            if (!e.ctrlKey && !e.metaKey) { V.cy += p; renderNow(); } break;
-        case "+": case "=": V.zoom *= 1.5; adaptIter(); renderNow(); break;
-        case "-": V.zoom = Math.max(0.1, V.zoom / 1.5); adaptIter(); renderNow(); break;
-        case "r": case "R": flyTo(-0.5, 0, 1); break;
-        case "f": case "F": toggleFS(); break;
-        case "S": togglePanel(); break;
-    }
-});
-
-// ===== Adaptive Iterations =====
-function adaptIter() {
-    const v = Math.min(2000, Math.max(100, 200 + 50 * Math.log2(V.zoom + 1) + 0.5 | 0));
-    const sl = $("sl-iter");
-    if (sl.dataset.manual !== "true") {
-        V.maxIter = v; sl.value = v; $("v-iter").textContent = v;
-    }
-}
-
-// ===== Fly-to Animation =====
-// 3 phases: zoom out → pan → zoom in.
-// Each rAF: update state, fire render (chains at worker speed).
-// No CSS transforms during animation — every frame is a real render.
-function flyTo(tx, ty, tz) {
-    if (V.animating) return;
-    V.animating = true;
-    document.body.classList.add("animating");
-
-    const sx = V.cx, sy = V.cy, sz = V.zoom;
-    const oz = Math.min(sz, tz, 1);
-    const d1 = 1200 / V.zoomSpeed, d2 = 1000 / V.panSpeed, d3 = 1500 / V.zoomSpeed;
-
-    const ease = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3) / 2;
-    const eOut = t => t === 1 ? 1 : 1 - Math.pow(2, -10*t);
-    const lz = (a, b, t) => Math.exp(Math.log(a) + (Math.log(b) - Math.log(a)) * t);
-
-    let t0 = null, phase = 0, panSx, panSy;
-
-    function step(ts) {
-        if (!t0) t0 = ts;
-        const el = ts - t0;
-
-        if (phase === 0) {
-            const t = Math.min(1, el / d1), e = ease(t);
-            V.zoom = lz(sz, oz, e);
-            V.cx = sx + (tx - sx) * e * 0.2;
-            V.cy = sy + (ty - sy) * e * 0.2;
-            adaptIter();
-            if (t >= 1) { phase = 1; t0 = ts; panSx = V.cx; panSy = V.cy; }
-        } else if (phase === 1) {
-            const t = Math.min(1, el / d2), e = ease(t);
-            V.cx = panSx + (tx - panSx) * e;
-            V.cy = panSy + (ty - panSy) * e;
-            if (t >= 1) { V.cx = tx; V.cy = ty; phase = 2; t0 = ts; }
-        } else {
-            const t = Math.min(1, el / d3), e = eOut(t);
-            V.zoom = lz(oz, tz, e);
-            adaptIter();
-            if (t >= 1) {
-                V.zoom = tz;
-                V.animating = false;
-                document.body.classList.remove("animating");
-                renderNow();
-                return;
+        case 'ArrowLeft':  case 'a': cx -= p * ar; break;
+        case 'ArrowRight': case 'd': cx += p * ar; break;
+        case 'ArrowUp':    case 'w': cy += p; break;
+        case 'ArrowDown':
+            if (!e.ctrlKey && !e.metaKey) cy -= p;
+            break;
+        case 's':
+            if (!e.ctrlKey && !e.metaKey) cy -= p;
+            break;
+        case '+': case '=': zoom = Math.min(zoom * 1.5, 1e13); break;
+        case '-':            zoom = Math.max(zoom / 1.5, 0.15); break;
+        case 'r': case 'R':
+            poiPanel.querySelectorAll('.poi-item').forEach(el => el.classList.remove('active'));
+            poiLabel.textContent = 'DESTINATIONS';
+            zoomToPoint(-0.5, 0, 0.42, 4.5);
+            break;
+        case 'f': case 'F': toggleFullscreen(); break;
+        case 'u': case 'U': toggleUI(); break;
+        case 'g': case 'G': toggleCoordPanel(); break;
+        case 'a': case 'A':
+            if (e.key === 'A') {
+                autoZoom = !autoZoom;
+                autoBtn.classList.toggle('active', autoZoom);
+                showToast(autoZoom ? 'AUTO DRIFT ON' : 'AUTO DRIFT OFF');
             }
-        }
-
-        updateHUD();
-        render();
-        requestAnimationFrame(step);
+            break;
+        case 'Escape':
+            if (animating) { animating = false; setInteractive(true); }
+            if (coordPanelEl.classList.contains('open')) coordPanelEl.classList.remove('open');
+            if (poiPanel.classList.contains('open')) closeDD();
+            break;
     }
-    requestAnimationFrame(step);
+});
+
+// ── POI Dropdown ───────────────────────────────────────────────────────
+const poiPanel   = document.getElementById('poiPanel');
+const poiTrigger = document.getElementById('poiTrigger');
+const poiLabel   = document.getElementById('poiLabel');
+
+const cats = [...new Set(POI.map(p => p.cat))];
+cats.forEach(cat => {
+    const ch = document.createElement('div');
+    ch.className = 'poi-cat'; ch.textContent = cat;
+    poiPanel.appendChild(ch);
+    POI.filter(p => p.cat === cat).forEach(poi => {
+        const el = document.createElement('div');
+        el.className = 'poi-item'; el.dataset.name = poi.name;
+        el.innerHTML = `<span>${poi.name}</span><span class="poi-depth">${poi.depth}</span>`;
+        el.addEventListener('click', () => { selectPOI(poi); closeDD(); });
+        poiPanel.appendChild(el);
+    });
+});
+
+const openDD  = () => { poiTrigger.classList.add('open');    poiPanel.classList.add('open');    };
+const closeDD = () => { poiTrigger.classList.remove('open'); poiPanel.classList.remove('open'); };
+
+poiTrigger.addEventListener('click', e => {
+    e.stopPropagation();
+    poiPanel.classList.contains('open') ? closeDD() : openDD();
+});
+document.addEventListener('click', closeDD);
+poiPanel.addEventListener('click', e => e.stopPropagation());
+
+function selectPOI(poi) {
+    if (animating) return;
+    poiPanel.querySelectorAll('.poi-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.name === poi.name);
+    });
+    poiLabel.textContent = poi.name;
+    showToast(poi.name);
+    zoomToPoint(poi.x, poi.y, poi.z);
 }
 
-// ===== UI =====
-function togglePanel() { $("panel").classList.toggle("hidden"); }
-$("btn-toggle").addEventListener("click", togglePanel);
-$("btn-close").addEventListener("click", () => $("panel").classList.add("hidden"));
-canvas.addEventListener("pointerdown", () => {
-    if (!$("panel").classList.contains("hidden")) $("panel").classList.add("hidden");
+// ── UI Controls ────────────────────────────────────────────────────────
+const autoBtn = document.getElementById('autoBtn');
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+    poiPanel.querySelectorAll('.poi-item').forEach(el => el.classList.remove('active'));
+    poiLabel.textContent = 'DESTINATIONS';
+    zoomToPoint(-0.5, 0, 0.42, 4.5);
 });
 
-(function buildPOI() {
-    const list = $("poi-list");
-    for (const p of POI) {
-        const b = document.createElement("button");
-        b.className = "poi-btn";
-        b.innerHTML = `<span class="poi-name">${p.name}</span><span class="poi-sub">${p.d}</span>`;
-        b.addEventListener("click", () => { $("panel").classList.add("hidden"); flyTo(p.x, p.y, p.z); });
-        list.appendChild(b);
+autoBtn.addEventListener('click', () => {
+    autoZoom = !autoZoom;
+    autoBtn.classList.toggle('active', autoZoom);
+    showToast(autoZoom ? 'AUTO DRIFT ON' : 'AUTO DRIFT OFF');
+});
+
+document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
+
+const iterSlider = document.getElementById('iterSlider');
+const iterVal    = document.getElementById('iterVal');
+iterSlider.addEventListener('input', e => {
+    maxIter = +e.target.value;
+    iterVal.textContent = maxIter;
+    document.getElementById('stIter').textContent = maxIter;
+});
+
+// ── Coordinate Panel ───────────────────────────────────────────────────
+const coordPanelEl = document.getElementById('coordPanel');
+const coordBtn     = document.getElementById('coordBtn');
+
+function toggleCoordPanel() {
+    coordPanelEl.classList.toggle('open');
+    if (coordPanelEl.classList.contains('open')) updateCoordInputs();
+}
+
+coordBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    toggleCoordPanel();
+});
+document.addEventListener('click', e => {
+    if (!coordPanelEl.contains(e.target) && e.target !== coordBtn) {
+        coordPanelEl.classList.remove('open');
     }
-})();
+});
+coordPanelEl.addEventListener('click', e => e.stopPropagation());
 
-$("btn-go").addEventListener("click", () => {
-    const x = parseFloat($("in-re").value);
-    const y = parseFloat($("in-im").value);
-    const z = parseFloat($("in-z").value);
+function updateCoordInputs() {
+    document.getElementById('inRe').value = cx.toFixed(10);
+    document.getElementById('inIm').value = cy.toFixed(10);
+    document.getElementById('inZ').value = zoom.toFixed(4);
+}
+
+document.getElementById('btnGo').addEventListener('click', () => {
+    const x = parseFloat(document.getElementById('inRe').value);
+    const y = parseFloat(document.getElementById('inIm').value);
+    const z = parseFloat(document.getElementById('inZ').value);
     if (isNaN(x) || isNaN(y) || isNaN(z)) return;
-    $("panel").classList.add("hidden");
-    flyTo(x, y, Math.max(0.1, z));
+    coordPanelEl.classList.remove('open');
+    showToast(`(${x.toFixed(4)}, ${y.toFixed(4)})`);
+    zoomToPoint(x, y, Math.max(0.15, z));
 });
 
-$("sl-zspeed").addEventListener("input", e => {
-    V.zoomSpeed = parseFloat(e.target.value);
-    $("v-zspeed").textContent = V.zoomSpeed.toFixed(1) + "x";
-});
-$("sl-pspeed").addEventListener("input", e => {
-    V.panSpeed = parseFloat(e.target.value);
-    $("v-pspeed").textContent = V.panSpeed.toFixed(1) + "x";
-});
-$("sl-iter").addEventListener("input", e => {
-    e.target.dataset.manual = "true";
-    V.maxIter = parseInt(e.target.value);
-    $("v-iter").textContent = V.maxIter;
-    renderNow();
-});
-$("sl-res").addEventListener("input", e => {
-    V.resFactor = parseFloat(e.target.value);
-    $("v-res").textContent = V.resFactor.toFixed(2) + "x";
-    resize(); renderNow();
-});
+// ── UI Toggle ──────────────────────────────────────────────────────────
+const header   = document.getElementById('header');
+const footer   = document.getElementById('footer');
+const uiToggle = document.getElementById('uiToggle');
+let uiOn = true;
 
-function toggleFS() {
+function toggleUI() {
+    uiOn = !uiOn;
+    header.classList.toggle('hidden', !uiOn);
+    footer.classList.toggle('hidden', !uiOn);
+    uiToggle.classList.toggle('ui-hidden', !uiOn);
+    if (!uiOn) coordPanelEl.classList.remove('open');
+}
+uiToggle.addEventListener('click', toggleUI);
+
+function toggleFullscreen() {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
     else document.exitFullscreen().catch(()=>{});
 }
 
-let rzTimer = null;
-window.addEventListener("resize", () => {
-    resize(); render();
-    clearTimeout(rzTimer);
-    rzTimer = setTimeout(() => { resize(); renderNow(); }, 200);
-});
-
-if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
+function setInteractive(on) {
+    document.querySelectorAll('.ibtn,.poi-trigger,.poi-item').forEach(el => {
+        el.style.opacity = on ? '' : '0.35';
+        el.style.pointerEvents = on ? '' : 'none';
+    });
+    canvas.style.pointerEvents = on ? '' : 'none';
 }
 
-// ===== Boot =====
+let toastTimer;
+const toastEl = document.getElementById('toast');
+function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2000);
+}
+
+// ── RENDER LOOP ────────────────────────────────────────────────────────
+const stX    = document.getElementById('stX');
+const stY    = document.getElementById('stY');
+const stZ    = document.getElementById('stZ');
+const stIter = document.getElementById('stIter');
+let lastStat = 0;
+
+function render(ts) {
+    requestAnimationFrame(render);
+
+    if (autoZoom && !animating) zoom *= 1.0012;
+
+    gl.uniform2f(uCenter, cx, cy);
+    gl.uniform1f(uZoom,   zoom);
+    gl.uniform1f(uIter,   maxIter);
+    gl.uniform2f(uRes,    rW, rH);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // DOM updates throttled to ~8fps
+    if (ts - lastStat > 120) {
+        stX.textContent = cx.toFixed(8);
+        stY.textContent = cy.toFixed(8);
+        stZ.textContent = zoom < 1e6
+            ? zoom.toFixed(zoom < 10 ? 2 : 0) + '×'
+            : zoom.toExponential(1) + '×';
+        stIter.textContent = maxIter;
+        lastStat = ts;
+    }
+}
+
+// ── PWA ────────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+}
+
+// ── INIT ───────────────────────────────────────────────────────────────
 resize();
-render();
-initMM();
-$("loading").classList.add("fade-out");
-setTimeout(() => $("loading").remove(), 600);
+
+const ldBar = document.getElementById('ldBar');
+let lp = 0;
+const lInt = setInterval(() => {
+    lp = Math.min(lp + Math.random()*22, 93);
+    ldBar.style.width = lp + '%';
+}, 55);
+setTimeout(() => {
+    clearInterval(lInt); ldBar.style.width = '100%';
+    setTimeout(() => {
+        document.getElementById('loading').classList.add('done');
+        render(0);
+    }, 260);
+}, 500);

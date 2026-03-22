@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="description" content="Interactive Mandelbrot Set Explorer — zoom, pan, and discover fractal beauty">
-    <meta name="theme-color" content="#0a0a0f">
+    <meta name="description" content="Interactive Mandelbrot Set Explorer — GPU-accelerated fractal rendering">
+    <meta name="theme-color" content="#060910">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Mandelbrot">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="msapplication-TileColor" content="#0a0a0f">
+    <meta name="msapplication-TileColor" content="#060910">
     <meta name="format-detection" content="telephone=no">
     <title>Mandelbrot Explorer</title>
     <link rel="manifest" href="/manifest.json">
@@ -18,80 +18,95 @@
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div id="app">
-    <canvas id="canvas"></canvas>
 
-    <div id="loading">
-        <div class="ld"><div class="spin"></div><p>Loading Mandelbrot Explorer…</p></div>
-    </div>
-
-    <div id="hud" class="hud">
-        <span id="hud-c"></span>
-        <span id="hud-z"></span>
-        <span id="hud-ms"></span>
-    </div>
-
-    <button id="btn-toggle" class="toggle-btn" aria-label="Controls">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <line x1="4" y1="7" x2="20" y2="7"/><circle cx="8" cy="7" r="2.5" fill="currentColor"/>
-            <line x1="4" y1="12" x2="20" y2="12"/><circle cx="14" cy="12" r="2.5" fill="currentColor"/>
-            <line x1="4" y1="17" x2="20" y2="17"/><circle cx="10" cy="17" r="2.5" fill="currentColor"/>
-        </svg>
-    </button>
-
-    <div id="panel" class="panel hidden">
-        <div class="panel-head">
-            <h2>Controls</h2>
-            <button id="btn-close" class="close-btn">&times;</button>
-        </div>
-
-        <section>
-            <h3>Places of Interest</h3>
-            <div id="poi-list" class="poi-list"></div>
-        </section>
-
-        <section>
-            <h3>Go to Coordinates</h3>
-            <div class="coord-grid">
-                <label>Real<input type="number" id="in-re" step="any" value="-0.5"></label>
-                <label>Imaginary<input type="number" id="in-im" step="any" value="0"></label>
-                <label>Zoom<input type="number" id="in-z" step="any" min="0.1" value="1"></label>
-                <button id="btn-go" class="btn accent">Go</button>
-            </div>
-        </section>
-
-        <section>
-            <h3>Speed</h3>
-            <div class="sliders">
-                <label>Zoom <input type="range" id="sl-zspeed" min="0.5" max="5" step="0.1" value="2"><span id="v-zspeed">2.0x</span></label>
-                <label>Pan <input type="range" id="sl-pspeed" min="0.5" max="5" step="0.1" value="2"><span id="v-pspeed">2.0x</span></label>
-            </div>
-        </section>
-
-        <section>
-            <h3>Render</h3>
-            <div class="sliders">
-                <label>Iterations <input type="range" id="sl-iter" min="50" max="2000" step="10" value="300"><span id="v-iter">300</span></label>
-                <label>Resolution <input type="range" id="sl-res" min="0.25" max="2" step="0.25" value="1"><span id="v-res">1.00x</span></label>
-            </div>
-        </section>
-
-        <section>
-            <h3>Keys</h3>
-            <div class="keys">
-                <kbd>Scroll</kbd>/<kbd>Pinch</kbd> Zoom &middot;
-                <kbd>Drag</kbd> Pan &middot;
-                <kbd>+</kbd>/<kbd>-</kbd> Zoom &middot;
-                <kbd>Arrows</kbd> Pan &middot;
-                <kbd>R</kbd> Reset &middot;
-                <kbd>S</kbd> Controls &middot;
-                <kbd>F</kbd> Fullscreen
-            </div>
-        </section>
-    </div>
-
-    <canvas id="minimap" class="minimap" width="160" height="120"></canvas>
+<div id="loading">
+    <div class="ld-name">MANDELBROT</div>
+    <div class="ld-sub">FRACTAL EXPLORER</div>
+    <div class="ld-bg"><div class="ld-bar" id="ldBar"></div></div>
 </div>
+
+<canvas id="canvas"></canvas>
+
+<div id="header">
+    <div class="brand">MANDEL<em>BROT</em></div>
+    <div class="vd"></div>
+
+    <div class="ibtn" id="resetBtn" title="Reset to overview (R)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+        </svg>
+    </div>
+
+    <div class="ibtn" id="autoBtn" title="Auto-zoom drift (A)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+    </div>
+
+    <div class="ibtn" id="fsBtn" title="Fullscreen (F)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+        </svg>
+    </div>
+
+    <div class="vd"></div>
+
+    <div class="iter-wrap">
+        <span>ITER</span>
+        <input type="range" id="iterSlider" min="64" max="2048" step="32" value="256">
+        <span class="iter-val" id="iterVal">256</span>
+    </div>
+
+    <div class="vd"></div>
+
+    <div class="poi-wrap" id="poiWrap">
+        <div class="poi-trigger" id="poiTrigger">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <span id="poiLabel">DESTINATIONS</span>
+            <svg class="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="poi-panel" id="poiPanel"></div>
+    </div>
+
+    <div class="vd"></div>
+
+    <div class="ibtn" id="coordBtn" title="Go to coordinates (G)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 1 0-16 0c0 3 2.7 7 8 11.7z"/>
+        </svg>
+    </div>
+</div>
+
+<div id="coordPanel" class="coord-panel">
+    <div class="coord-title">GO TO COORDINATES</div>
+    <div class="coord-grid">
+        <label>Real (X)<input type="number" id="inRe" step="any" value="-0.5"></label>
+        <label>Imag (Y)<input type="number" id="inIm" step="any" value="0"></label>
+        <label>Zoom<input type="number" id="inZ" step="any" min="0.15" value="0.42"></label>
+        <button id="btnGo" class="btn-go">Navigate</button>
+    </div>
+</div>
+
+<div id="uiToggle" title="Toggle UI (U)">
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round">
+        <path d="M17 8l-5-5-5 5"/><path d="M17 16l-5 5-5-5"/>
+    </svg>
+</div>
+
+<div id="footer">
+    <span class="stat"><b>X </b><span id="stX">-0.50000000</span></span>
+    <span class="stat"><b>Y </b><span id="stY">0.00000000</span></span>
+    <span class="stat"><b>Z </b><span id="stZ">0.42×</span></span>
+    <span class="stat"><b>ITER </b><span id="stIter">256</span></span>
+    <span class="hint-txt">scroll · drag · pinch &middot; <kbd>?</kbd> keys</span>
+</div>
+
+<div id="toast"></div>
+
 <script src="/app.js"></script>
 </body>
 </html>
