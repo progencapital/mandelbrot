@@ -1,7 +1,7 @@
 // Mandelbrot computation worker
-// Optimizations: cardioid/bulb rejection, periodicity detection, smooth coloring
+// Optimizations: cardioid/bulb rejection, periodicity detection, smooth coloring, Uint32 packing
 
-const P = new Uint8Array(768); // 256 * 3 palette
+const P = new Uint8Array(768);
 (function() {
     const S = [
         [0.0,   0,   7, 100],
@@ -25,42 +25,38 @@ const P = new Uint8Array(768); // 256 * 3 palette
 })();
 
 const LN2 = Math.log(2);
+const BLACK = 0xFF000000;
 
-function compute(w, h, xMin, yStart, dx, dy, maxIter) {
+self.onmessage = function(e) {
+    const d = e.data;
+    const w = d.w, h = d.h, xMin = d.xMin, yMin = d.yMin;
+    const dx = d.dx, dy = d.dy, maxIter = d.maxIter;
+
     const buf = new ArrayBuffer(w * h << 2);
     const px = new Uint32Array(buf);
-
-    // Periodicity detection period — check every 20 iterations
-    const checkPeriod = 20;
+    const t0 = performance.now();
 
     for (let py = 0; py < h; py++) {
-        const ci = yStart + py * dy;
+        const ci = yMin + py * dy;
         const ci2 = ci * ci;
         const off = py * w;
 
         for (let pxx = 0; pxx < w; pxx++) {
             const cr = xMin + pxx * dx;
 
-            // --- Cardioid check ---
+            // Cardioid
             const cr25 = cr - 0.25;
             const q = cr25 * cr25 + ci2;
-            if (q * (q + cr25) <= 0.25 * ci2) {
-                px[off + pxx] = 0xFF000000; // black, opaque
-                continue;
-            }
+            if (q * (q + cr25) <= 0.25 * ci2) { px[off + pxx] = BLACK; continue; }
 
-            // --- Period-2 bulb ---
+            // Period-2 bulb
             const cr1 = cr + 1.0;
-            if (cr1 * cr1 + ci2 <= 0.0625) {
-                px[off + pxx] = 0xFF000000;
-                continue;
-            }
+            if (cr1 * cr1 + ci2 <= 0.0625) { px[off + pxx] = BLACK; continue; }
 
-            // --- Escape iteration with periodicity detection ---
             let zr = 0.0, zi = 0.0, zr2 = 0.0, zi2 = 0.0;
             let iter = 0;
-            let pzr = 0.0, pzi = 0.0; // period check saved values
-            let pCount = 0;
+            // Periodicity detection
+            let pzr = 0.0, pzi = 0.0, pCnt = 0, pPer = 8;
 
             while (iter < maxIter) {
                 zi = 2.0 * zr * zi + ci;
@@ -71,50 +67,36 @@ function compute(w, h, xMin, yStart, dx, dy, maxIter) {
 
                 if (zr2 + zi2 > 4.0) break;
 
-                // Periodicity check: if orbit returns to a saved point, it's in the set
-                if (zr === pzr && zi === pzi) {
-                    iter = maxIter;
-                    break;
-                }
-                pCount++;
-                if (pCount >= checkPeriod) {
-                    pzr = zr;
-                    pzi = zi;
-                    pCount = 0;
+                // Periodicity: if orbit returns to saved point, it's interior
+                if (zr === pzr && zi === pzi) { iter = maxIter; break; }
+                if (++pCnt >= pPer) {
+                    pzr = zr; pzi = zi; pCnt = 0;
+                    pPer = pPer < 512 ? pPer << 1 : 512; // adaptive period growth
                 }
             }
 
             if (iter >= maxIter) {
-                px[off + pxx] = 0xFF000000;
+                px[off + pxx] = BLACK;
             } else {
-                // Smooth coloring
                 const lzn = Math.log(zr2 + zi2) * 0.5;
                 const nu = Math.log(lzn / LN2) / LN2;
                 const s = (iter + 1 - nu) * 4.0;
-                const i1 = ((s | 0) & 255) * 3;
-                const i2 = (((s | 0) + 1) & 255) * 3;
-                const f = s - (s | 0);
+                const si = s | 0;
+                const i1 = (si & 255) * 3;
+                const i2 = ((si + 1) & 255) * 3;
+                const f = s - si;
                 const g = 1.0 - f;
                 const r = P[i1]   * g + P[i2]   * f | 0;
-                const gr= P[i1+1] * g + P[i2+1] * f | 0;
+                const gn= P[i1+1] * g + P[i2+1] * f | 0;
                 const b = P[i1+2] * g + P[i2+2] * f | 0;
-                px[off + pxx] = 0xFF000000 | (b << 16) | (gr << 8) | r;
+                // ABGR for little-endian Uint32
+                px[off + pxx] = 0xFF000000 | (b << 16) | (gn << 8) | r;
             }
         }
     }
-    return buf;
-}
 
-self.onmessage = function(e) {
-    const d = e.data;
-    const t0 = performance.now();
-    const buf = compute(d.w, d.h, d.xMin, d.yMin, d.dx, d.dy, d.maxIter);
     self.postMessage({
-        id: d.id,
-        buf: buf,
-        ms: performance.now() - t0,
-        w: d.w,
-        h: d.h,
-        y: d.y
+        id: d.id, buf, ms: performance.now() - t0,
+        w, h, y: d.y
     }, [buf]);
 };
