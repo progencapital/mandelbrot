@@ -11,106 +11,87 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="msapplication-TileColor" content="#0a0a0f">
     <meta name="format-detection" content="telephone=no">
-
     <title>Mandelbrot Explorer</title>
-
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
-
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <div id="app">
-        <canvas id="fractal-canvas"></canvas>
+<div id="app">
+    <canvas id="canvas"></canvas>
 
-        <div id="loading-overlay">
-            <div class="loader-content">
-                <div class="spinner"></div>
-                <p>Loading Mandelbrot Explorer…</p>
-            </div>
-        </div>
-
-        <div id="hud" class="hud">
-            <span id="hud-coords"></span>
-            <span id="hud-zoom"></span>
-            <span id="hud-iter"></span>
-        </div>
-
-        <button id="controls-toggle" class="controls-toggle" aria-label="Toggle controls" title="Toggle controls">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <line x1="4" y1="7" x2="20" y2="7"/><circle cx="8" cy="7" r="2.5" fill="currentColor"/>
-                <line x1="4" y1="17" x2="20" y2="17"/><circle cx="16" cy="17" r="2.5" fill="currentColor"/>
-                <line x1="4" y1="12" x2="20" y2="12"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>
-            </svg>
-        </button>
-
-        <div id="controls-panel" class="controls-panel hidden">
-            <div class="controls-header">
-                <h2>Controls</h2>
-                <button id="controls-close" class="controls-close" aria-label="Close">&times;</button>
-            </div>
-
-            <div class="controls-section">
-                <h3>Places of Interest</h3>
-                <div id="poi-list" class="poi-list"></div>
-            </div>
-
-            <div class="controls-section">
-                <h3>Go to Coordinates</h3>
-                <div class="coord-input-group">
-                    <label>Real<input type="number" id="input-real" step="any" value="-0.5" /></label>
-                    <label>Imaginary<input type="number" id="input-imag" step="any" value="0" /></label>
-                    <label>Zoom<input type="number" id="input-zoom" step="any" min="0.1" value="1" /></label>
-                    <button id="btn-goto" class="btn btn-primary">Go</button>
-                </div>
-            </div>
-
-            <div class="controls-section">
-                <h3>Animation Speed</h3>
-                <div class="slider-group">
-                    <label>Zoom Speed
-                        <input type="range" id="slider-zoom-speed" min="0.5" max="5" step="0.1" value="2" />
-                        <span id="zoom-speed-val">2.0x</span>
-                    </label>
-                    <label>Pan Speed
-                        <input type="range" id="slider-pan-speed" min="0.5" max="5" step="0.1" value="2" />
-                        <span id="pan-speed-val">2.0x</span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="controls-section">
-                <h3>Render Settings</h3>
-                <div class="slider-group">
-                    <label>Max Iterations
-                        <input type="range" id="slider-iterations" min="50" max="2000" step="10" value="300" />
-                        <span id="iter-val">300</span>
-                    </label>
-                    <label>Resolution Scale
-                        <input type="range" id="slider-resolution" min="0.25" max="2" step="0.25" value="1" />
-                        <span id="res-val">1.0x</span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="controls-section">
-                <h3>Keyboard Shortcuts</h3>
-                <div class="shortcuts-list">
-                    <kbd>Scroll</kbd> / <kbd>Pinch</kbd> Zoom in/out<br>
-                    <kbd>Drag</kbd> Pan<br>
-                    <kbd>+</kbd> / <kbd>-</kbd> Zoom<br>
-                    <kbd>Arrow keys</kbd> Pan<br>
-                    <kbd>R</kbd> Reset view<br>
-                    <kbd>S</kbd> Toggle controls<br>
-                    <kbd>F</kbd> Fullscreen
-                </div>
-            </div>
-        </div>
-
-        <canvas id="minimap-canvas" class="minimap" width="160" height="120"></canvas>
+    <div id="loading">
+        <div class="ld"><div class="spin"></div><p>Loading Mandelbrot Explorer…</p></div>
     </div>
 
-    <script src="/app.js"></script>
+    <div id="hud" class="hud">
+        <span id="hud-c"></span>
+        <span id="hud-z"></span>
+        <span id="hud-ms"></span>
+    </div>
+
+    <button id="btn-toggle" class="toggle-btn" aria-label="Controls">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="4" y1="7" x2="20" y2="7"/><circle cx="8" cy="7" r="2.5" fill="currentColor"/>
+            <line x1="4" y1="12" x2="20" y2="12"/><circle cx="14" cy="12" r="2.5" fill="currentColor"/>
+            <line x1="4" y1="17" x2="20" y2="17"/><circle cx="10" cy="17" r="2.5" fill="currentColor"/>
+        </svg>
+    </button>
+
+    <div id="panel" class="panel hidden">
+        <div class="panel-head">
+            <h2>Controls</h2>
+            <button id="btn-close" class="close-btn">&times;</button>
+        </div>
+
+        <section>
+            <h3>Places of Interest</h3>
+            <div id="poi-list" class="poi-list"></div>
+        </section>
+
+        <section>
+            <h3>Go to Coordinates</h3>
+            <div class="coord-grid">
+                <label>Real<input type="number" id="in-re" step="any" value="-0.5"></label>
+                <label>Imaginary<input type="number" id="in-im" step="any" value="0"></label>
+                <label>Zoom<input type="number" id="in-z" step="any" min="0.1" value="1"></label>
+                <button id="btn-go" class="btn accent">Go</button>
+            </div>
+        </section>
+
+        <section>
+            <h3>Speed</h3>
+            <div class="sliders">
+                <label>Zoom <input type="range" id="sl-zspeed" min="0.5" max="5" step="0.1" value="2"><span id="v-zspeed">2.0x</span></label>
+                <label>Pan <input type="range" id="sl-pspeed" min="0.5" max="5" step="0.1" value="2"><span id="v-pspeed">2.0x</span></label>
+            </div>
+        </section>
+
+        <section>
+            <h3>Render</h3>
+            <div class="sliders">
+                <label>Iterations <input type="range" id="sl-iter" min="50" max="2000" step="10" value="300"><span id="v-iter">300</span></label>
+                <label>Resolution <input type="range" id="sl-res" min="0.25" max="2" step="0.25" value="1"><span id="v-res">1.00x</span></label>
+            </div>
+        </section>
+
+        <section>
+            <h3>Keys</h3>
+            <div class="keys">
+                <kbd>Scroll</kbd>/<kbd>Pinch</kbd> Zoom &middot;
+                <kbd>Drag</kbd> Pan &middot;
+                <kbd>+</kbd>/<kbd>-</kbd> Zoom &middot;
+                <kbd>Arrows</kbd> Pan &middot;
+                <kbd>R</kbd> Reset &middot;
+                <kbd>S</kbd> Controls &middot;
+                <kbd>F</kbd> Fullscreen
+            </div>
+        </section>
+    </div>
+
+    <canvas id="minimap" class="minimap" width="160" height="120"></canvas>
+</div>
+<script src="/app.js"></script>
 </body>
 </html>

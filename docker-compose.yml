@@ -5,3 +5,8 @@ services:
       - "80:80"
       - "443:443"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 8G

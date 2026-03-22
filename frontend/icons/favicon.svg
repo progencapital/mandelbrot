@@ -11,11 +11,8 @@
   </defs>
   <rect width="512" height="512" rx="96" fill="url(#bg)"/>
   <circle cx="256" cy="256" r="200" fill="url(#glow)"/>
-  <!-- Stylized Mandelbrot cardioid -->
   <path d="M 280 256 C 280 200 230 140 190 140 C 140 140 110 190 110 256 C 110 322 140 372 190 372 C 230 372 280 312 280 256 Z" fill="#0a0a0f" stroke="#6c7bff" stroke-width="4"/>
-  <!-- Period-2 bulb -->
   <circle cx="340" cy="256" r="50" fill="#0a0a0f" stroke="#6c7bff" stroke-width="3"/>
-  <!-- Small decorative spirals -->
   <circle cx="160" cy="180" r="12" fill="none" stroke="#8b97ff" stroke-width="2" opacity="0.6"/>
   <circle cx="160" cy="332" r="12" fill="none" stroke="#8b97ff" stroke-width="2" opacity="0.6"/>
   <circle cx="400" cy="256" r="8" fill="none" stroke="#8b97ff" stroke-width="1.5" opacity="0.4"/>
