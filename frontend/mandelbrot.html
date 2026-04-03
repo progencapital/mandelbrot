@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="description" content="Interactive Mandelbrot Set Explorer — GPU-accelerated fractal rendering">
+    <meta name="theme-color" content="#060910">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Mandelbrot">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="msapplication-TileColor" content="#060910">
+    <meta name="format-detection" content="telephone=no">
+    <title>Mandelbrot Explorer</title>
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg:       #060910;
+    --surface:  rgba(6, 9, 16, 0.88);
+    --border:   rgba(0, 210, 255, 0.11);
+    --accent:   #00d2ff;
+    --accent2:  #ff3d6e;
+    --text:     #b8ccd8;
+    --dim:      #3d5565;
+    --panel-h:  56px;
+    --footer-h: 32px;
+    --fn:       'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, 'Liberation Mono', monospace;
+    --fs:       -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --st: env(safe-area-inset-top, 0px);
+    --sb: env(safe-area-inset-bottom, 0px);
+    --sl: env(safe-area-inset-left, 0px);
+    --sr: env(safe-area-inset-right, 0px);
+}
+
+html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    overflow: hidden;
+    font-family: var(--fn);
+    color: var(--text);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#canvas {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    display: block; cursor: grab; touch-action: none;
+}
+#canvas.grabbing { cursor: grabbing; }
+
+/* ── HEADER ── */
+#header {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: var(--panel-h); z-index: 10;
+    background: var(--surface);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center;
+    padding: 0 14px; gap: 10px;
+    transition: transform 0.4s cubic-bezier(.4,0,.2,1);
+}
+#header.hidden { transform: translateY(calc(-1 * var(--panel-h))); }
+
+.brand {
+    font-family: var(--fs);
+    font-weight: 800; font-size: 14px; letter-spacing: 0.08em;
+    color: var(--accent); white-space: nowrap; flex-shrink: 0;
+}
+.brand em { color: var(--dim); font-style: normal; font-weight: 400; }
+
+.vd {
+    width: 1px; height: 26px; flex-shrink: 0;
+    background: var(--border); margin: 0 3px;
+}
+
+.ibtn {
+    width: 32px; height: 32px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,210,255,0.05); border: 1px solid var(--border);
+    border-radius: 6px; cursor: pointer; color: var(--dim);
+    transition: background .15s, border-color .15s, color .15s;
+}
+.ibtn:hover  { background: rgba(0,210,255,0.12); border-color: rgba(0,210,255,0.3); color: var(--accent); }
+.ibtn.active { background: rgba(0,210,255,0.16); border-color: var(--accent); color: var(--accent); }
+.ibtn svg    { pointer-events: none; }
+
+.iter-wrap {
+    display: flex; align-items: center; gap: 7px;
+    flex-shrink: 0; font-size: 10px; color: var(--dim);
+}
+.iter-wrap input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 80px; height: 2px;
+    background: rgba(0,210,255,0.18); border-radius: 2px;
+    cursor: pointer; outline: none;
+}
+.iter-wrap input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg);
+}
+.iter-wrap input[type=range]::-moz-range-thumb {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg);
+}
+.iter-val { color: var(--accent); min-width: 26px; text-align: right; }
+
+/* ── POI DROPDOWN ── */
+.poi-wrap { position: relative; flex-shrink: 0; }
+
+.poi-trigger {
+    display: flex; align-items: center; gap: 7px;
+    padding: 0 11px; height: 32px;
+    background: rgba(255,61,110,0.06); border: 1px solid rgba(255,61,110,0.2);
+    border-radius: 6px; cursor: pointer;
+    color: #ff8faa; font-family: var(--fn);
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em;
+    white-space: nowrap; user-select: none;
+    transition: background .15s, border-color .15s;
+}
+.poi-trigger:hover  { background: rgba(255,61,110,0.12); border-color: rgba(255,61,110,0.4); }
+.poi-trigger.open   { background: rgba(255,61,110,0.14); border-color: rgba(255,61,110,0.5); }
+.poi-trigger svg.chevron { transition: transform .2s; flex-shrink: 0; }
+.poi-trigger.open svg.chevron { transform: rotate(180deg); }
+
+.poi-panel {
+    position: absolute; top: calc(100% + 7px); left: 0;
+    min-width: 220px; max-height: 70vh; overflow-y: auto;
+    background: rgba(5, 8, 14, 0.97);
+    border: 1px solid rgba(255,61,110,0.2);
+    border-radius: 9px; overflow-x: hidden;
+    opacity: 0; transform: translateY(-6px) scale(0.97);
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+    z-index: 50;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+}
+.poi-panel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+
+.poi-cat {
+    padding: 8px 13px 4px;
+    font-size: 8.5px; font-weight: 600; letter-spacing: 0.14em;
+    color: var(--dim); text-transform: uppercase;
+    border-top: 1px solid rgba(255,255,255,0.045);
+}
+.poi-cat:first-child { border-top: none; }
+
+.poi-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 13px; cursor: pointer;
+    font-size: 11px; color: #ddb0c4;
+    transition: background .1s; gap: 14px;
+}
+.poi-item:hover  { background: rgba(255,61,110,0.1); color: #ffccd8; }
+.poi-item.active { color: var(--accent2); }
+.poi-depth { font-size: 9px; color: var(--dim); white-space: nowrap; font-weight: 300; }
+
+/* ── COORDINATE PANEL ── */
+.coord-panel {
+    position: fixed;
+    top: calc(var(--panel-h) + 8px);
+    right: 50px;
+    z-index: 30;
+    background: rgba(5, 8, 14, 0.97);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 14px;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+    opacity: 0; transform: translateY(-6px) scale(0.97);
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+}
+.coord-panel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+
+.coord-title {
+    font-size: 8.5px; font-weight: 600; letter-spacing: 0.14em;
+    color: var(--dim); text-transform: uppercase;
+    margin-bottom: 10px;
+}
+
+.coord-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 8px; width: 240px;
+}
+.coord-grid label {
+    font-size: 9px; color: var(--dim);
+    display: flex; flex-direction: column; gap: 4px;
+    letter-spacing: 0.05em;
+}
+.coord-grid input {
+    width: 100%; padding: 7px 8px;
+    background: rgba(20,20,35,.8); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font: 11px var(--fn);
+    outline: none; transition: border-color .15s;
+}
+.coord-grid input:focus { border-color: var(--accent); }
+
+.btn-go {
+    grid-column: 1/-1;
+    padding: 8px 16px; border: none; border-radius: 6px;
+    font: 600 11px var(--fn); letter-spacing: 0.06em;
+    cursor: pointer; transition: background .15s;
+    background: rgba(0,210,255,0.15); color: var(--accent);
+    border: 1px solid rgba(0,210,255,0.3);
+}
+.btn-go:hover { background: rgba(0,210,255,0.25); }
+
+/* ── FOOTER ── */
+#footer {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    height: var(--footer-h); z-index: 10;
+    background: var(--surface);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center;
+    padding: 0 14px; gap: 14px;
+    transition: transform 0.4s cubic-bezier(.4,0,.2,1);
+}
+#footer.hidden { transform: translateY(var(--footer-h)); }
+
+.stat { font-size: 10px; }
+.stat b { color: var(--dim); font-weight: 400; margin-right: 3px; }
+.hint-txt { margin-left: auto; font-size: 9.5px; color: var(--dim); opacity: 0.5; }
+.hint-txt kbd {
+    display: inline-block; padding: 0 4px;
+    background: rgba(30,30,50,.8); border: 1px solid var(--border);
+    border-radius: 3px; font: 9px var(--fn); color: var(--text);
+}
+
+/* ── TOGGLE ── */
+#uiToggle {
+    position: fixed; right: 12px; top: calc(var(--panel-h) + 8px);
+    z-index: 20; width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(6,9,16,0.75); border: 1px solid var(--border);
+    border-radius: 50%; cursor: pointer; color: var(--dim);
+    transition: color .2s, border-color .2s, top .4s cubic-bezier(.4,0,.2,1);
+}
+#uiToggle:hover     { color: var(--accent); border-color: rgba(0,210,255,0.35); }
+#uiToggle.ui-hidden { top: 8px; }
+
+/* ── TOAST ── */
+#toast {
+    position: fixed; top: calc(var(--panel-h) + 12px); left: 50%;
+    transform: translateX(-50%) translateY(-4px);
+    z-index: 40; pointer-events: none;
+    padding: 5px 14px;
+    background: rgba(0,210,255,0.1); border: 1px solid rgba(0,210,255,0.25);
+    border-radius: 20px; font-family: var(--fs);
+    font-size: 10.5px; letter-spacing: 0.06em; color: var(--accent);
+    opacity: 0; transition: opacity .25s, transform .25s;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── LOADING ── */
+#loading {
+    position: fixed; inset: 0; z-index: 100;
+    background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; transition: opacity .5s ease;
+}
+#loading.done { opacity: 0; pointer-events: none; }
+.ld-name { font-family: var(--fs); font-size: 20px; font-weight: 800; letter-spacing: .12em; color: var(--accent); }
+.ld-sub  { font-size: 9.5px; color: var(--dim); letter-spacing: .15em; }
+.ld-bg   { width: 160px; height: 1px; background: rgba(0,210,255,0.1); border-radius: 1px; overflow: hidden; }
+.ld-bar  { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 640px) {
+    :root { --panel-h: 100px; }
+    #header { flex-wrap: wrap; padding: 8px 12px; align-items: flex-start; gap: 6px; }
+    .vd     { display: none; }
+    .iter-wrap input[type=range] { width: 65px; }
+    .hint-txt { display: none; }
+    #uiToggle { top: calc(var(--panel-h) + 6px); }
+    .coord-panel { right: 8px; left: 8px; width: auto; }
+    .coord-grid { width: auto; }
+}
+
+/* Scrollbar */
+.poi-panel::-webkit-scrollbar { width: 4px; }
+.poi-panel::-webkit-scrollbar-track { background: transparent; }
+.poi-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    </style>
+</head>
+<body>
+
+<div id="loading">
+    <div class="ld-name">MANDELBROT</div>
+    <div class="ld-sub">FRACTAL EXPLORER</div>
+    <div class="ld-bg"><div class="ld-bar" id="ldBar"></div></div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<div id="header">
+    <div class="brand">MANDEL<em>BROT</em></div>
+    <div class="vd"></div>
+
+    <div class="ibtn" id="resetBtn" title="Reset to overview (R)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+        </svg>
+    </div>
+
+    <div class="ibtn" id="autoBtn" title="Auto-zoom drift (A)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+    </div>
+
+    <div class="ibtn" id="fsBtn" title="Fullscreen (F)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+        </svg>
+    </div>
+
+    <div class="vd"></div>
+
+    <div class="iter-wrap">
+        <span>ITER</span>
+        <input type="range" id="iterSlider" min="64" max="2048" step="32" value="256">
+        <span class="iter-val" id="iterVal">256</span>
+    </div>
+
+    <div class="vd"></div>
+
+    <div class="poi-wrap" id="poiWrap">
+        <div class="poi-trigger" id="poiTrigger">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <span id="poiLabel">DESTINATIONS</span>
+            <svg class="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="poi-panel" id="poiPanel"></div>
+    </div>
+
+    <div class="vd"></div>
+
+    <div class="ibtn" id="coordBtn" title="Go to coordinates (G)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 1 0-16 0c0 3 2.7 7 8 11.7z"/>
+        </svg>
+    </div>
+</div>
+
+<div id="coordPanel" class="coord-panel">
+    <div class="coord-title">GO TO COORDINATES</div>
+    <div class="coord-grid">
+        <label>Real (X)<input type="number" id="inRe" step="any" value="-0.5"></label>
+        <label>Imag (Y)<input type="number" id="inIm" step="any" value="0"></label>
+        <label>Zoom<input type="number" id="inZ" step="any" min="0.15" value="0.42"></label>
+        <button id="btnGo" class="btn-go">Navigate</button>
+    </div>
+</div>
+
+<div id="uiToggle" title="Toggle UI (U)">
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round">
+        <path d="M17 8l-5-5-5 5"/><path d="M17 16l-5 5-5-5"/>
+    </svg>
+</div>
+
+<div id="footer">
+    <span class="stat"><b>X </b><span id="stX">-0.50000000</span></span>
+    <span class="stat"><b>Y </b><span id="stY">0.00000000</span></span>
+    <span class="stat"><b>Z </b><span id="stZ">0.42×</span></span>
+    <span class="stat"><b>ITER </b><span id="stIter">256</span></span>
+    <span class="hint-txt">scroll · drag · pinch &middot; <kbd>?</kbd> keys</span>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Mandelbrot Explorer — WebGL2 GPU-accelerated rendering
+//  Every pixel computed in parallel on the GPU every frame at 60fps.
+//  No workers, no buffers, no swaps — just uniform updates + drawArrays.
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── POINTS OF INTEREST ─────────────────────────────────────────────────
+const POI = [
+    // Classic Regions
+    { cat:'Classic',  name:'Seahorse Valley',  x:-0.7436438870371587, y:0.1318259042053119,  z:200,    depth:'200×'   },
+    { cat:'Classic',  name:'Elephant Valley',  x:0.30820836,          y:0.01990000,           z:150,    depth:'150×'   },
+    { cat:'Classic',  name:'Triple Spiral',    x:-0.158586639,        y:1.033900685,          z:250,    depth:'250×'   },
+    { cat:'Classic',  name:'West Spike',       x:-1.99985,            y:0.0,                  z:2000,   depth:'2e3×'   },
+    // Deep Spirals
+    { cat:'Deep Spirals', name:'Nautilus',       x:-0.74364388703, y:0.13182590421, z:8000,  depth:'8e3×'   },
+    { cat:'Deep Spirals', name:'Double Whorl',   x:-0.74529938,    y:0.11300000,    z:3000,  depth:'3e3×'   },
+    { cat:'Deep Spirals', name:'Fibonacci Arms', x:-0.7017681,     y:0.3839830,     z:2000,  depth:'2e3×'   },
+    { cat:'Deep Spirals', name:'Spiral Nebula',  x:-0.7453,        y:0.1130,        z:700,   depth:'700×'   },
+    // Mini Mandelbrots
+    { cat:'Mini Brots', name:'Infant Brot',    x:-1.7549651,    y:0.0,          z:800,   depth:'800×'   },
+    { cat:'Mini Brots', name:'Embedded Brot',  x:-0.17476619,   y:1.06554016,   z:3000,  depth:'3e3×'   },
+    { cat:'Mini Brots', name:'Distant Clone',  x:-1.62917,      y:-0.0203968,   z:1000,  depth:'1e3×'   },
+    // Tendrils
+    { cat:'Tendrils', name:'Neural Web',   x:-0.56062,  y:-0.64228, z:500,   depth:'500×'   },
+    { cat:'Tendrils', name:'Dendrite',     x:0.0,       y:1.0,      z:300,   depth:'300×'   },
+    { cat:'Tendrils', name:'Feather Edge', x:0.42884,   y:-0.23116, z:300,   depth:'300×'   },
+    { cat:'Tendrils', name:'Lightning',    x:-0.503397, y:0.563199, z:600,   depth:'600×'   },
+    // Extra deep
+    { cat:'Deep Zoom', name:'Double Spiral',   x:-0.0452407411, y:0.9868162204352258, z:2000,  depth:'2e3×'   },
+    { cat:'Deep Zoom', name:'Starfish',        x:-0.3558404221, y:0.6428140572,       z:5000,  depth:'5e3×'   },
+    { cat:'Deep Zoom', name:'Spiral Galaxy',   x:-0.7436439,    y:0.1318259,          z:50000, depth:'5e4×'   },
+    { cat:'Deep Zoom', name:'Mini Mandelbrot', x:-1.7497591451303665, y:0.0000000388,  z:300000, depth:'3e5×' },
+    { cat:'Deep Zoom', name:'Quad Spiral',     x:0.27322626,    y:0.595153338,        z:60000, depth:'6e4×'   },
+];
+
+// ── WEBGL2 SETUP ───────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const gl = canvas.getContext('webgl2', {
+    antialias: false,
+    preserveDrawingBuffer: false,
+    powerPreference: 'high-performance',
+    desynchronized: true,
+});
+
+if (!gl) {
+    document.body.innerHTML = '<p style="color:#ff3d6e;padding:40px;font-family:monospace">WebGL2 not available — your browser does not support GPU-accelerated rendering.</p>';
+    throw new Error('WebGL2 not available');
+}
+
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+let rW = 0, rH = 0;
+
+function resize() {
+    const w = Math.floor(window.innerWidth  * DPR);
+    const h = Math.floor(window.innerHeight * DPR);
+    if (w === rW && h === rH) return;
+    canvas.width = rW = w;
+    canvas.height = rH = h;
+    gl.viewport(0, 0, rW, rH);
+}
+window.addEventListener('resize', resize, { passive: true });
+
+// ── Vertex shader ───────────────────────────────────────────────────
+const VERT = `#version 300 es
+precision highp float;
+in  vec2 pos;
+out vec2 uv;
+void main() { gl_Position = vec4(pos,0,1); uv = pos; }`;
+
+// ── Fragment shader — 4x unrolled loop, smooth escape ───────────────
+const FRAG = `#version 300 es
+precision highp float;
+in  vec2  uv;
+out vec4  o;
+
+uniform vec2  center;
+uniform float zoom;
+uniform float maxIter;
+uniform vec2  res;
+
+vec3 pal(float t) {
+  return clamp(
+    vec3(0.5,0.5,0.5)
+    + vec3(0.5,0.5,0.5) * cos(6.28318*(vec3(1.0,1.0,0.8)*t + vec3(0.0,0.2,0.55))),
+    0.0, 1.0);
+}
+
+void main() {
+  float ar = res.x / res.y;
+  float cr = center.x + uv.x * ar / zoom;
+  float ci = center.y + uv.y        / zoom;
+
+  float zr=0., zi=0., zr2=0., zi2=0.;
+  float n = 0.;
+  float lim = maxIter - 4.;
+
+  for (int i = 0; i < 512; i++) {
+    if (n >= lim || zr2+zi2 > 256.) break;
+    zi=2.*zr*zi+ci; zr=zr2-zi2+cr; n+=1.; zr2=zr*zr; zi2=zi*zi; if(zr2+zi2>256.) break;
+    zi=2.*zr*zi+ci; zr=zr2-zi2+cr; n+=1.; zr2=zr*zr; zi2=zi*zi; if(zr2+zi2>256.) break;
+    zi=2.*zr*zi+ci; zr=zr2-zi2+cr; n+=1.; zr2=zr*zr; zi2=zi*zi; if(zr2+zi2>256.) break;
+    zi=2.*zr*zi+ci; zr=zr2-zi2+cr; n+=1.; zr2=zr*zr; zi2=zi*zi;
+  }
+
+  if (n >= maxIter) {
+    o = vec4(0,0,0,1);
+  } else {
+    float t = (n + 2. - log2(log2(zr2+zi2)*0.5)) / maxIter;
+    o = vec4(pal(t * 2.8 + 0.1), 1.0);
+  }
+}`;
+
+function mkShader(src, type) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+        console.error(gl.getShaderInfoLog(s));
+    return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, mkShader(VERT, gl.VERTEX_SHADER));
+gl.attachShader(prog, mkShader(FRAG, gl.FRAGMENT_SHADER));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+    console.error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+
+const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+const vbuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+const pLoc = gl.getAttribLocation(prog, 'pos');
+gl.enableVertexAttribArray(pLoc);
+gl.vertexAttribPointer(pLoc, 2, gl.FLOAT, false, 0, 0);
+
+const uCenter = gl.getUniformLocation(prog, 'center');
+const uZoom   = gl.getUniformLocation(prog, 'zoom');
+const uIter   = gl.getUniformLocation(prog, 'maxIter');
+const uRes    = gl.getUniformLocation(prog, 'res');
+
+// ── STATE ──────────────────────────────────────────────────────────────
+let cx = -0.5, cy = 0.0, zoom = 0.42;
+let maxIter = 256;
+let autoZoom = false;
+let animating = false;
+
+// ── EASING ─────────────────────────────────────────────────────────────
+const ss  = t => t*t*t*(t*(t*6-15)+10);  // smootherstep (Perlin quintic)
+const ei3 = t => t*t*t;                   // ease-in cubic
+
+// ── CINEMATIC NAVIGATION ───────────────────────────────────────────────
+const OV = 0.42;  // overview zoom — full set visible
+
+function zoomToPoint(tx, ty, tz, dur = 9.0) {
+    if (animating) return;
+    animating = true;
+    setInteractive(false);
+
+    const x0 = cx, y0 = cy, z0 = zoom;
+
+    const nearOV = z0 <= OV * 1.5;
+    const P1 = nearOV ? 0.03 : 0.25;
+    const P2 = nearOV ? 0.60 : 0.68;
+
+    const t0 = performance.now();
+    const durMs = dur * 1000;
+
+    function frame(now) {
+        const p = Math.min((now - t0) / durMs, 1);
+
+        if (p <= P1) {
+            const pp = ss(p / P1);
+            zoom = Math.exp(Math.log(z0) * (1-pp) + Math.log(OV) * pp);
+            cx = x0; cy = y0;
+        } else if (p <= P2) {
+            const pp = ss((p - P1) / (P2 - P1));
+            zoom = OV;
+            cx = x0 + (tx - x0) * pp;
+            cy = y0 + (ty - y0) * pp;
+        } else {
+            const pp = ei3((p - P2) / (1 - P2));
+            cx = tx; cy = ty;
+            zoom = Math.exp(Math.log(OV) * (1-pp) + Math.log(tz) * pp);
+        }
+
+        if (p < 1) {
+            requestAnimationFrame(frame);
+        } else {
+            cx = tx; cy = ty; zoom = tz;
+            animating = false;
+            setInteractive(true);
+            updateCoordInputs();
+        }
+    }
+
+    requestAnimationFrame(frame);
+}
+
+// ── INPUT — Mouse wheel zoom ───────────────────────────────────────────
+canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (animating) return;
+    const rect = canvas.getBoundingClientRect();
+    const uvx =  (e.clientX - rect.left) / rect.width  * 2 - 1;
+    const uvy = -((e.clientY - rect.top)  / rect.height * 2 - 1);
+    const ar = rect.width / rect.height;
+    const wx = cx + uvx * ar / zoom;
+    const wy = cy + uvy       / zoom;
+    const f  = e.deltaY < 0 ? 1.08 : 0.926;
+    zoom = Math.max(0.15, Math.min(zoom * f, 1e13));
+    cx = wx - uvx * ar / zoom;
+    cy = wy - uvy       / zoom;
+}, { passive: false });
+
+// ── Input — Mouse drag pan ─────────────────────────────────────────────
+let drag = false, dx = 0, dy = 0;
+canvas.addEventListener('mousedown', e => {
+    if (animating) return;
+    drag = true; dx = e.clientX; dy = e.clientY;
+    canvas.classList.add('grabbing');
+});
+window.addEventListener('mousemove', e => {
+    if (!drag) return;
+    const W = window.innerWidth, H = window.innerHeight;
+    const ar = W / H;
+    cx -= (e.clientX - dx) / H * 2 * ar / zoom;
+    cy += (e.clientY - dy) / H * 2        / zoom;
+    dx = e.clientX; dy = e.clientY;
+}, { passive: true });
+window.addEventListener('mouseup', () => { drag = false; canvas.classList.remove('grabbing'); });
+
+// ── Input — Touch ──────────────────────────────────────────────────────
+const touches = new Map();
+let pinchD0 = 0, pinchZ0 = 0;
+
+canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) touches.set(t.identifier, {x:t.clientX, y:t.clientY});
+    if (e.touches.length === 2) {
+        const [a,b] = e.touches;
+        pinchD0 = Math.hypot(b.clientX-a.clientX, b.clientY-a.clientY);
+        pinchZ0 = zoom;
+    }
+}, {passive:false});
+
+canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (animating) return;
+    if (e.touches.length === 1) {
+        const t = e.touches[0], p = touches.get(t.identifier);
+        if (!p) return;
+        const W = window.innerWidth, H = window.innerHeight;
+        const ar = W / H;
+        cx -= (t.clientX - p.x) / H * 2 * ar / zoom;
+        cy += (t.clientY - p.y) / H * 2        / zoom;
+        touches.set(t.identifier, {x:t.clientX, y:t.clientY});
+    } else if (e.touches.length === 2) {
+        const [a,b] = e.touches;
+        zoom = Math.max(0.15, Math.min(pinchZ0*Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY)/pinchD0, 1e13));
+    }
+}, {passive:false});
+
+canvas.addEventListener('touchend', e => {
+    for (const t of e.changedTouches) touches.delete(t.identifier);
+}, {passive:false});
+
+// ── Keyboard ───────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if (animating && e.key !== 'Escape') return;
+
+    const p = 0.08 / zoom;
+    const ar = window.innerWidth / window.innerHeight;
+    switch (e.key) {
+        case 'ArrowLeft':  case 'a': cx -= p * ar; break;
+        case 'ArrowRight': case 'd': cx += p * ar; break;
+        case 'ArrowUp':    case 'w': cy += p; break;
+        case 'ArrowDown':
+            if (!e.ctrlKey && !e.metaKey) cy -= p;
+            break;
+        case 's':
+            if (!e.ctrlKey && !e.metaKey) cy -= p;
+            break;
+        case '+': case '=': zoom = Math.min(zoom * 1.5, 1e13); break;
+        case '-':            zoom = Math.max(zoom / 1.5, 0.15); break;
+        case 'r': case 'R':
+            poiPanel.querySelectorAll('.poi-item').forEach(el => el.classList.remove('active'));
+            poiLabel.textContent = 'DESTINATIONS';
+            zoomToPoint(-0.5, 0, 0.42, 4.5);
+            break;
+        case 'f': case 'F': toggleFullscreen(); break;
+        case 'u': case 'U': toggleUI(); break;
+        case 'g': case 'G': toggleCoordPanel(); break;
+        case 'a': case 'A':
+            if (e.key === 'A') {
+                autoZoom = !autoZoom;
+                autoBtn.classList.toggle('active', autoZoom);
+                showToast(autoZoom ? 'AUTO DRIFT ON' : 'AUTO DRIFT OFF');
+            }
+            break;
+        case 'Escape':
+            if (animating) { animating = false; setInteractive(true); }
+            if (coordPanelEl.classList.contains('open')) coordPanelEl.classList.remove('open');
+            if (poiPanel.classList.contains('open')) closeDD();
+            break;
+    }
+});
+
+// ── POI Dropdown ───────────────────────────────────────────────────────
+const poiPanel   = document.getElementById('poiPanel');
+const poiTrigger = document.getElementById('poiTrigger');
+const poiLabel   = document.getElementById('poiLabel');
+
+const cats = [...new Set(POI.map(p => p.cat))];
+cats.forEach(cat => {
+    const ch = document.createElement('div');
+    ch.className = 'poi-cat'; ch.textContent = cat;
+    poiPanel.appendChild(ch);
+    POI.filter(p => p.cat === cat).forEach(poi => {
+        const el = document.createElement('div');
+        el.className = 'poi-item'; el.dataset.name = poi.name;
+        el.innerHTML = `<span>${poi.name}</span><span class="poi-depth">${poi.depth}</span>`;
+        el.addEventListener('click', () => { selectPOI(poi); closeDD(); });
+        poiPanel.appendChild(el);
+    });
+});
+
+const openDD  = () => { poiTrigger.classList.add('open');    poiPanel.classList.add('open');    };
+const closeDD = () => { poiTrigger.classList.remove('open'); poiPanel.classList.remove('open'); };
+
+poiTrigger.addEventListener('click', e => {
+    e.stopPropagation();
+    poiPanel.classList.contains('open') ? closeDD() : openDD();
+});
+document.addEventListener('click', closeDD);
+poiPanel.addEventListener('click', e => e.stopPropagation());
+
+function selectPOI(poi) {
+    if (animating) return;
+    poiPanel.querySelectorAll('.poi-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.name === poi.name);
+    });
+    poiLabel.textContent = poi.name;
+    showToast(poi.name);
+    zoomToPoint(poi.x, poi.y, poi.z);
+}
+
+// ── UI Controls ────────────────────────────────────────────────────────
+const autoBtn = document.getElementById('autoBtn');
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+    poiPanel.querySelectorAll('.poi-item').forEach(el => el.classList.remove('active'));
+    poiLabel.textContent = 'DESTINATIONS';
+    zoomToPoint(-0.5, 0, 0.42, 4.5);
+});
+
+autoBtn.addEventListener('click', () => {
+    autoZoom = !autoZoom;
+    autoBtn.classList.toggle('active', autoZoom);
+    showToast(autoZoom ? 'AUTO DRIFT ON' : 'AUTO DRIFT OFF');
+});
+
+document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
+
+const iterSlider = document.getElementById('iterSlider');
+const iterVal    = document.getElementById('iterVal');
+iterSlider.addEventListener('input', e => {
+    maxIter = +e.target.value;
+    iterVal.textContent = maxIter;
+    document.getElementById('stIter').textContent = maxIter;
+});
+
+// ── Coordinate Panel ───────────────────────────────────────────────────
+const coordPanelEl = document.getElementById('coordPanel');
+const coordBtn     = document.getElementById('coordBtn');
+
+function toggleCoordPanel() {
+    coordPanelEl.classList.toggle('open');
+    if (coordPanelEl.classList.contains('open')) updateCoordInputs();
+}
+
+coordBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    toggleCoordPanel();
+});
+document.addEventListener('click', e => {
+    if (!coordPanelEl.contains(e.target) && e.target !== coordBtn) {
+        coordPanelEl.classList.remove('open');
+    }
+});
+coordPanelEl.addEventListener('click', e => e.stopPropagation());
+
+function updateCoordInputs() {
+    document.getElementById('inRe').value = cx.toFixed(10);
+    document.getElementById('inIm').value = cy.toFixed(10);
+    document.getElementById('inZ').value = zoom.toFixed(4);
+}
+
+document.getElementById('btnGo').addEventListener('click', () => {
+    const x = parseFloat(document.getElementById('inRe').value);
+    const y = parseFloat(document.getElementById('inIm').value);
+    const z = parseFloat(document.getElementById('inZ').value);
+    if (isNaN(x) || isNaN(y) || isNaN(z)) return;
+    coordPanelEl.classList.remove('open');
+    showToast(`(${x.toFixed(4)}, ${y.toFixed(4)})`);
+    zoomToPoint(x, y, Math.max(0.15, z));
+});
+
+// ── UI Toggle ──────────────────────────────────────────────────────────
+const header   = document.getElementById('header');
+const footer   = document.getElementById('footer');
+const uiToggle = document.getElementById('uiToggle');
+let uiOn = true;
+
+function toggleUI() {
+    uiOn = !uiOn;
+    header.classList.toggle('hidden', !uiOn);
+    footer.classList.toggle('hidden', !uiOn);
+    uiToggle.classList.toggle('ui-hidden', !uiOn);
+    if (!uiOn) coordPanelEl.classList.remove('open');
+}
+uiToggle.addEventListener('click', toggleUI);
+
+function toggleFullscreen() {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+    else document.exitFullscreen().catch(()=>{});
+}
+
+function setInteractive(on) {
+    document.querySelectorAll('.ibtn,.poi-trigger,.poi-item').forEach(el => {
+        el.style.opacity = on ? '' : '0.35';
+        el.style.pointerEvents = on ? '' : 'none';
+    });
+    canvas.style.pointerEvents = on ? '' : 'none';
+}
+
+let toastTimer;
+const toastEl = document.getElementById('toast');
+function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2000);
+}
+
+// ── RENDER LOOP ────────────────────────────────────────────────────────
+const stX    = document.getElementById('stX');
+const stY    = document.getElementById('stY');
+const stZ    = document.getElementById('stZ');
+const stIter = document.getElementById('stIter');
+let lastStat = 0;
+
+function render(ts) {
+    requestAnimationFrame(render);
+
+    if (autoZoom && !animating) zoom *= 1.0012;
+
+    gl.uniform2f(uCenter, cx, cy);
+    gl.uniform1f(uZoom,   zoom);
+    gl.uniform1f(uIter,   maxIter);
+    gl.uniform2f(uRes,    rW, rH);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // DOM updates throttled to ~8fps
+    if (ts - lastStat > 120) {
+        stX.textContent = cx.toFixed(8);
+        stY.textContent = cy.toFixed(8);
+        stZ.textContent = zoom < 1e6
+            ? zoom.toFixed(zoom < 10 ? 2 : 0) + '×'
+            : zoom.toExponential(1) + '×';
+        stIter.textContent = maxIter;
+        lastStat = ts;
+    }
+}
+
+// ── PWA ────────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+}
+
+// ── INIT ───────────────────────────────────────────────────────────────
+resize();
+
+const ldBar = document.getElementById('ldBar');
+let lp = 0;
+const lInt = setInterval(() => {
+    lp = Math.min(lp + Math.random()*22, 93);
+    ldBar.style.width = lp + '%';
+}, 55);
+setTimeout(() => {
+    clearInterval(lInt); ldBar.style.width = '100%';
+    setTimeout(() => {
+        document.getElementById('loading').classList.add('done');
+        render(0);
+    }, 260);
+}, 500);
+</script>
+</body>
+</html>
